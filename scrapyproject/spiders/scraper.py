@@ -1,47 +1,61 @@
+#_*_ coding: utf-8 _*_
+
+
 from scrapy.selector import HtmlXPathSelector
 from scrapy.spiders import Spider, Rule
 from scrapy.http import Request
 from scrapy.linkextractors import LinkExtractor
-import regex
-import os
-import html2text
+try:
+    import regex
+    import html2text
+except:
+    import sys
+    import subprocess
+    subprocess.check_call({sys.executable, '-m', 'pip', 'install', 'regex', 'html2text'])
+    import regex
+    import html2text
 #from scrapyproject.items import Myitems
 
 log_type = ["text","input","pic","url"]
 
 def TrueFalse(text):
-    user_input = str(input(text))
+    user_input = str(raw_input(text))
     if user_input == "y" or user_input == "Y" or user_input == "Yes" or user_input == "YES" or user_input == "yes":
         return True
     else:
         return False
 
 if TrueFalse("Buscar en google? "):
-    DOMAIN = "www.google.com/q=" + str(input("Indique la búsqueda: ")).replace(" ","+")
+    DOMAIN = "www.google.com/q=" + str(raw_input("Indique la búsqueda: ")).replace(" ","+")
 else:
-    DOMAIN = str(input("Indique la url: "))
+    DOMAIN = str(raw_input("Indique la url: "))
 
 URL = 'http://%s' % DOMAIN
 
 try:
-    limite = int(input("Indique la profundidad: "))
+    limite = int(raw_input("Indique la profundidad: "))
 except:
     limite = 1
-
-read_text = True
-read_input = True
-read_pic = True
-read_url = True
 
 if TrueFalse("Modificar registro de datos? (Todo) "):
     if not TrueFalse("Registrar texto? (Y/n) "):
         read_text = False
+    else: read_text = True
     if not TrueFalse("Registrar inputs? (Y/n) "):
         read_input = False
+    else: read_input = True
     if not TrueFalse("Registrar imagenes? (Y/n) "):
         read_pic = False
+    else: read_pic = True
     if not TrueFalse("Registrar URLs? (Y/n) "):
         read_url = False
+    else: read_url = True
+else:
+    read_text = True
+    read_input = True
+    read_pic = True
+    read_url = True
+
 
 if TrueFalse("Borrar registros anteriores? (Y/n) "):
     for log in log_type:
