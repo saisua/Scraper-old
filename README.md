@@ -1,2 +1,2 @@
-# Scrapy_scrapper
-A python Scrapy bot for data gathering
+# Scraper
+A python selenium bot for data gathering
