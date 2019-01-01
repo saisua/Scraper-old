@@ -82,79 +82,87 @@ class Crawler(object):
         time.sleep(self.time_wait_load*2)
         print("[+]Site loaded successfully!")
 
-    def crawl(self, site=None, max_depth=1, load_amount=-1, max_tabs=5, parent=None, save_text=False, condition=None, do_if_condition=None, recrawl=False, autosave=False, root=True):
+    def crawl(self, site=None, max_depth=1, load_amount=-1, max_tabs=5, parent=None, save_text=False, save_img=False, condition=None, do_if_condition=None, recrawl=False, autosave=False, root=True):
         if(site):
             self.get_website(site)
-        try:
-            while(len(self.processing_tabs)):
-                # Open needed tabs
-                while(len(self.driver.window_handles) < max_tabs and len([site_value for (site_key, site_value) in self.sites.items() if site_value < max_depth and len(site_key.get_hrefs()) and not site_key in self.loaded_sites])):
-                    site = [site_key for (site_key, site_value) in sorted(self.sites.items(), key=lambda x: x[1], reverse=True) if site_value < max_depth and len(site_key.get_hrefs())][0]
-                    self.driver.switch_to.window(site.get_tab())
-                    site.set_hrefs([new for new in self.get_new_sites() if not new.get_attribute("href") in self.visited_sites.keys()])
-                    link = site.get_hrefs()[0]
-                    link_href = link.get_attribute("href")
-                    if(not link_href in self.visited_sites.keys()):
-                        self.visited_sites[link_href] = 1  # Just in case redirect
-                        site.remove_from_hrefs(link)  # Only useful when last href
-                    parent = self.store(
-                        type="site", data=link_href, dataname="link", root=False, parent=site.get_parent())
-                    self.goto_new_site(
-                        link=link_href, depth=site.get_depth(), parent=parent)
-                    print("Loaded tab number " + str(len(self.processing_tabs)))
-                try:  # To free up memory IF went into the while
-                    del link, link_href, site, parent
-                except:
-                    pass
+        if(max_tabs > max_depth):
+            #num tabs must be at least equal to max depth being opened
+            #but max_depth starts at 0.
+            try:
+                while(len(self.processing_tabs)):
+                    # Open needed tabs
+                    while(len(self.driver.window_handles) < max_tabs and len([site_value for (site_key, site_value) in self.sites.items() if site_value < max_depth and len(site_key.get_hrefs()) and not site_key in self.loaded_sites])):
+                        site = [site_key for (site_key, site_value) in sorted(self.sites.items(), key=lambda x: x[1], reverse=True) if site_value < max_depth and len(site_key.get_hrefs())][0]
+                        self.driver.switch_to.window(site.get_tab())
+                        site.set_hrefs([new for new in self.get_new_sites() if not new.get_attribute("href") in self.visited_sites.keys()])
+                        link = site.get_hrefs()[0]
+                        link_href = link.get_attribute("href")
+                        if(not link_href in self.visited_sites.keys()):
+                            self.visited_sites[link_href] = 1  # Just in case redirect
+                            site.remove_from_hrefs(link)  # Only useful when last href
+                        parent = self.store(
+                            type="site", data=link_href, dataname="link", root=False, parent=site.get_parent())
+                        self.goto_new_site(
+                            link=link_href, depth=site.get_depth(), parent=parent)
+                        print("Loaded tab number " + str(len(self.processing_tabs)))
+                    try:  # To free up memory IF went into the while
+                        del link, link_href, site, parent
+                    except:
+                        pass
 
-                # Load all tabs
-                if(load_amount >= 0):
-                    to_remove = []
-                    for site in self.processing_tabs:  # Last tab opened does not load
-                        if(not site.get_timeout() >= self.timeoutsec):
-                            self.driver.switch_to.window(site.get_tab())
-                            loaded_before = site.get_removed_scroll()
-                            loaded = self.load_site(
-                                removed_scroll=loaded_before, deep=load_amount)
-                            if(loaded.__class__.__name__ == "list" and site.get_timeout() < self.timeoutsec):
-                                if(len(loaded) > len(loaded_before)):
-                                    print("Restarted timeout!")
-                                    site.set_timeout(0)
-                                else:
-                                    site.set_timeout(site.get_timeout()+1)
-                                site.set_removed_scroll(loaded)
-                            elif(not len(site.get_hrefs())):
+                    # Load all tabs
+                    if(load_amount >= 0):
+                        to_remove = []
+                        for site in self.processing_tabs:  # Last tab opened does not load
+                            if(not site.get_timeout() >= self.timeoutsec):
+                                self.driver.switch_to.window(site.get_tab())
+                                loaded_before = site.get_removed_scroll()
+                                loaded = self.load_site(
+                                    removed_scroll=loaded_before, deep=load_amount)
+                                if(loaded.__class__.__name__ == "list" and site.get_timeout() < self.timeoutsec):
+                                    if(len(loaded) > len(loaded_before)):
+                                        print("Restarted timeout!")
+                                        site.set_timeout(0)
+                                    else:
+                                        site.set_timeout(site.get_timeout()+1)
+                                    site.set_removed_scroll(loaded)
+                                elif(not len(site.get_hrefs())):
+                                    to_remove.append(site)
+                            if(not site in self.loaded_sites and (site.get_depth() == max_depth or site.get_timeout() >= self.timeoutsec)):
                                 to_remove.append(site)
-                        if(not site in self.loaded_sites and (site.get_depth() == max_depth or site.get_timeout() >= self.timeoutsec)):
-                            to_remove.append(site)
-                        # dont delete if got all links but not loaded
-                        elif(site in self.loaded_sites and (not len(site.get_hrefs()) or site.get_depth() == max_depth)):
-                            # Actually delete marked tabs
-                            if(site.get_timeout() >= self.timeoutsec):  # Remove later debug purpose
-                                print("Timeout >.<")
-                            else:
-                                print("Site full loaded")
-                            self.processing_tabs.remove(site)
-                            self.driver.switch_to.window(site.get_tab())
-                            self.exec_js("window.close();")
-                            print("Closed depth " + str(self.sites[site]) + " num "+str(len(self.processing_tabs))+" site \"" + str(
-                            site.get_link()) + "\" with " + str(len(site.get_hrefs())) + " links left")
-                            del self.sites[site]
-                    time.sleep(self.time_wait_load)
-                # Mark to remove loaded unnecessary tabs
-                if(len(to_remove) > 0):
-                    for removing in to_remove:
-                        try:  # Sometimes tab is closed but not removed form list
-                            self.driver.switch_to.window(removing.get_tab())
-                            self.get_text(parent=removing.get_parent())
-                            self.get_images(parent=removing.get_parent())
-                            self.loaded_sites.append(removing)
-                            del removing
-                        except Exception as err:
-                            print(err)
-        except Exception as err: #TMP replace autosave
-            print(err)
-        self.data_to_xml(self.data_root)
+                            # dont delete if got all links but not loaded
+                            elif(site in self.loaded_sites and (not len(site.get_hrefs()) or site.get_depth() == max_depth)):
+                                # Actually delete marked tabs
+                                if(site.get_timeout() >= self.timeoutsec):  # Remove later debug purpose
+                                    print("Timeout >.<")
+                                else:
+                                    print("Site full loaded")
+                                if(condition and do_if_condition):
+                                    print("Do_if_condition: ", end="")
+                                    print(eval(do_if_condition))
+                                self.processing_tabs.remove(site)
+                                self.driver.switch_to.window(site.get_tab())
+                                self.exec_js("window.close();")
+                                print("Closed depth " + str(self.sites[site]) + " num "+str(len(self.processing_tabs))+" site \"" + str(
+                                site.get_link()) + "\" with " + str(len(site.get_hrefs())) + " links left")
+                                del self.sites[site]
+                        time.sleep(self.time_wait_load)
+                    # Mark to remove loaded unnecessary tabs
+                    if(len(to_remove) > 0):
+                        for removing in to_remove:
+                            try:  # Sometimes tab is closed but not removed form list
+                                self.driver.switch_to.window(removing.get_tab())
+                                if(save_text):
+                                    self.get_text(parent=removing.get_parent())
+                                if(save_img):
+                                    self.get_images(parent=removing.get_parent())
+                                self.loaded_sites.append(removing)
+                                del removing
+                            except Exception as err:
+                                print(err)
+            except Exception as err: #TMP replace autosave
+                print(err)
+            self.data_to_xml(self.data_root)
 
     def get_new_sites(self, site=None):
         # Later it will not only get hrefs
@@ -348,8 +356,8 @@ class Site(object):
 # TESTS
 crawler1 = Crawler("c1", timeout=10, time_wait=1.5, info_as_node_xml=True, rem=True)
 crawler1.clear_log()
-crawler1.crawl(max_depth=0, load_amount=1, max_tabs=20, autosave=True, save_text=True,
-               site="https://www.instagram.com/p/BsGkjLPgMhL/")  # ,condition="True",do_if_condition="""while(True): self.exec_js(\"\"\"document.querySelector("[class='browse-list-category']").click()\"\"\")""")
+crawler1.crawl(max_depth=0, load_amount=1, max_tabs=20, autosave=True, save_text=True, save_img=True,
+               site="https://github.com/saisua")  # ,condition="True",do_if_condition="""while(True): self.exec_js(\"\"\"document.querySelector("[class='browse-list-category']").click()\"\"\")""")
 # ,condition="'https://www.instagram.com/p/' in self.driver.current_url", do_if_condition="self.exec_js(\"\"\"document.querySelector(\"[class=\'dCJp8 afkep coreSpriteHeartOpen _0mzm-\']\").click();\"\"\")")
 # crawler1.test()
 crawler1.close()
