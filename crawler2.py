@@ -79,10 +79,9 @@ class Crawler(object):
             self.visited_domain[self.current_domain] += 1
         else:
             self.visited_domain[self.current_domain] = 1
-        time.sleep(self.time_wait_load*2)
         print("[+]Site loaded successfully!")
 
-    def crawl(self, site=None, max_depth=1, load_amount=-1, max_tabs=5, parent=None, save_text=False, save_img=False, condition=None, do_if_condition=None, recrawl=False, autosave=False, root=True):
+    def crawl(self, site=None, max_depth=1, load_amount=-1, max_tabs=5, save_text=False, save_img=False, condition=None, do_if_condition=None, recrawl=False, autosave=False):
         if(site):
             self.get_website(site)
         if(max_tabs > max_depth):
@@ -104,7 +103,7 @@ class Crawler(object):
                             type="site", data=link_href, dataname="link", root=False, parent=site.get_parent())
                         self.goto_new_site(
                             link=link_href, depth=site.get_depth(), parent=parent)
-                        print("Loaded tab number " + str(len(self.processing_tabs)))
+                        print("Loaded tab number " + str(len(self.driver.window_handles)))
                     try:  # To free up memory IF went into the while
                         del link, link_href, site, parent
                     except:
@@ -138,8 +137,9 @@ class Crawler(object):
                                 else:
                                     print("Site full loaded")
                                 if(condition and do_if_condition):
-                                    print("Do_if_condition: ", end="")
-                                    print(eval(do_if_condition))
+                                    if(eval(condition)):
+                                        print("Do_if_condition: ", end="")
+                                        print(eval(do_if_condition))
                                 self.processing_tabs.remove(site)
                                 self.driver.switch_to.window(site.get_tab())
                                 self.exec_js("window.close();")
@@ -160,6 +160,7 @@ class Crawler(object):
                                 del removing
                             except Exception as err:
                                 print(err)
+                    if(autosave): self.data_to_xml(self.data_root)
             except Exception as err: #TMP replace autosave
                 print(err)
             self.data_to_xml(self.data_root)
@@ -215,15 +216,13 @@ class Crawler(object):
         if(type):
             if(parent is None):
                 parent = ET.Element(type)
-                if(data and dataname):
-                    parent.set(dataname, data)
             else:
-                parent = ET.SubElement(parent, type)
-                if(data and dataname):
-                    parent.set(dataname, data)
+                parent = ET.SubElement(parent, str(type))
+            if(data and dataname):
+                parent.set(str(dataname), str(data))
         else:
             if(data and dataname):
-                parent.set(dataname, data)
+                parent.set(str(dataname), str(data))
         if(root):
             self.data_root = parent
         return parent
@@ -232,9 +231,12 @@ class Crawler(object):
         open(self.name+".xml", "w")
 
     def data_to_xml(self, data_root):
-        if(data_root is not None):
+        for site_key, site_value in self.sites.items():
+            self.store(data=site_value, dataname="times_visited", parent=site_key.get_parent())
+        if(not data_root is None):
             self.data_tree._setroot(data_root)
             self.data_tree.write(self.name+".xml", short_empty_elements=False)
+        print("Visited " + str(len(self.sites.values())) + " sites.")
 
     def load_site(self, removed_scroll=[], deep=0):
         if(deep < 0):
@@ -356,8 +358,8 @@ class Site(object):
 # TESTS
 crawler1 = Crawler("c1", timeout=10, time_wait=1.5, info_as_node_xml=True, rem=True)
 crawler1.clear_log()
-crawler1.crawl(max_depth=0, load_amount=1, max_tabs=20, autosave=True, save_text=True, save_img=True,
-               site="https://github.com/saisua")  # ,condition="True",do_if_condition="""while(True): self.exec_js(\"\"\"document.querySelector("[class='browse-list-category']").click()\"\"\")""")
+crawler1.crawl(max_depth=2, load_amount=0, max_tabs=30, autosave=False, save_text=True, save_img=True,
+               site="https://instagram.com/instagram")  # ,condition="True",do_if_condition="""while(True): self.exec_js(\"\"\"document.querySelector("[class='browse-list-category']").click()\"\"\")""")
 # ,condition="'https://www.instagram.com/p/' in self.driver.current_url", do_if_condition="self.exec_js(\"\"\"document.querySelector(\"[class=\'dCJp8 afkep coreSpriteHeartOpen _0mzm-\']\").click();\"\"\")")
 # crawler1.test()
 crawler1.close()
