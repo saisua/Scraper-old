@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 
-# Import nativos de Python
+# Import 
 import getpass
 import time
 import os
@@ -12,9 +12,6 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
 from selenium.webdriver.firefox.firefox_binary import FirefoxBinary
 from selenium import webdriver
-print("\n\n\n")
-# Import descargables
-
 
 class Crawler(object):
     def __init__(self, crawler_name, user=None, passwd=None, timeout=20, time_wait=1.5, info_as_node_xml=False, rem=False):
@@ -81,7 +78,7 @@ class Crawler(object):
             self.visited_domain[self.current_domain] = 1
         print("[+]Site loaded successfully!")
 
-    def crawl(self, site=None, max_depth=1, load_amount=-1, max_tabs=5, save_text=False, save_img=False, condition=None, do_if_condition=None, recrawl=False, autosave=False):
+    def crawl(self, site=None, max_depth=1, load_amount=-1, max_tabs=5, save_text=False, save_img=False, save_source=False, condition=None, do_if_condition=None, recrawl=False, autosave=False):
         if(site):
             self.get_website(site)
         if(max_tabs > max_depth):
@@ -156,6 +153,12 @@ class Crawler(object):
                                     self.get_text(parent=removing.get_parent())
                                 if(save_img):
                                     self.get_images(parent=removing.get_parent())
+                                if(save_source):
+                                    self.get_source(parent=removing.get_parent())
+                                
+                                if(removing.get_depth()==max_depth):
+                                    for link in removing.get_hrefs():
+                                        self.store(type="site", data=link.get_attribute("href"), dataname="link", root=False, parent=removing.get_parent())
                                 self.loaded_sites.append(removing)
                                 del removing
                             except Exception as err:
@@ -177,7 +180,7 @@ class Crawler(object):
         # print(self.driver.current_window_handle)
         self.exec_js("window.open();")
         self.driver.switch_to.window(self.driver.window_handles[self.driver.window_handles.index(
-            self.driver.current_window_handle)+1])  # test only
+            self.driver.current_window_handle)+1])
         self.get_website(site=link, depth=depth+1, parent=parent)
 
     def set_userpass(self, user, passwd, domains=None):
@@ -205,11 +208,13 @@ class Crawler(object):
     def find_in_website(self, search, tag=By.TAG_NAME, site=None):
         if(site):
             self.get_website(site)
-        for searched in search:
+        final = []
+        for searching in search:
             try:
-                return self.driver.find_elements(tag, searched)
+                final += self.driver.find_elements(tag, searching)
             except:
-                print("No element found")
+                print("No element "+ str(searching) +" found")
+        return final
 
     def store(self, type=None, data=None, dataname=None, parent=None, root=False):
         print("Stored: \"" + str(data) + "\"")
@@ -236,11 +241,11 @@ class Crawler(object):
         if(not data_root is None):
             self.data_tree._setroot(data_root)
             self.data_tree.write(self.name+".xml", short_empty_elements=False)
-        print("Visited " + str(len(self.sites.values())) + " sites.")
+        print("Visited " + str(len(self.sites.values())+1) + " sites.")
 
     def load_site(self, removed_scroll=[], deep=0):
         if(deep < 0):
-            return -1
+            return -1 #return true
         loaded = {"Main": -1}
         if (not "Main" in removed_scroll and deep >= 0):
             if(self.exec_js("return window.scrollY+window.innerHeight!=this.document.body.scrollHeight")):
@@ -251,18 +256,22 @@ class Crawler(object):
                 loaded["Main"] = 0
         if (deep > 0):
             try:
-                s_list = [element.get_attribute("class") for element in self.find_in_website(["//div", "//pre"], By.XPATH) if(
-                    element.value_of_css_property("overflow") in ["auto", "scroll", ""] and element not in removed_scroll)]
+                #print([element.get_attribute("class") for element in self.find_in_website(["div", "pre"], By.TAG_NAME)])
+                s_list = [element for element in self.find_in_website(["div", "pre"], By.TAG_NAME) if(
+                    element.value_of_css_property("overflow") in ["auto", "scroll", ""] and not element in removed_scroll)]
                 # ^ think add instead of reload
+                #print("ex1" in [e.get_attribute("class") for e in self.find_in_website(["div", "pre"], By.TAG_NAME)]) #debug
+                #print(len(self.find_in_website(["div", "pre"], By.TAG_NAME)))
+                #print(self.find_in_website(["ex1","ex2","ex3","ex4"],By.CLASS_NAME))
                 loaded["Scrolls"] = -len(s_list)
-                print("loading "+str(s_list))
                 for scroll in s_list:  # Select & down arrow
                     if(not scroll):
-                        print("loaded scroll")
-                        continue
-                    if(self.exec_js("return document.getElementsByClassName(arguments[0])[0].scrollTop!=document.getElementsByClassName(arguments[0])[0].scrollTopMax", scroll)):
+                        print("Scroll None")
+                        continue 
+                    #print("Scroll " + str(scroll.get_attribute("class"))+ " overflow: " + str(scroll.value_of_css_property("overflow")) + " result: " + str(self.exec_js("if(arguments[0].scrollTop!=arguments[0].scrollTopMax || arguments[0].scrollLeft!=arguments[0].scrollLeftMax){return true}else{return false};", scroll)))
+                    if(self.exec_js("if(arguments[0].scrollTop!=arguments[0].scrollTopMax || arguments[0].scrollLeft!=arguments[0].scrollLeftMax){return true}else{return false};", scroll)):
                         self.exec_js(
-                            "document.getElementsByClassName(arguments[0])[0].scrollTo(document.getElementsByClassName(arguments[0])[0].scrollLeftMax, document.getElementsByClassName(arguments[0])[0].scrollTopMax)", scroll)
+                            "arguments[0].scrollTo(arguments[0].scrollLeftMax, arguments[0].scrollTopMax)", scroll)
                     else:
                         print("Scroll loaded")
                         removed_scroll.append(scroll)
@@ -289,6 +298,11 @@ class Crawler(object):
         images = self.find_in_website(["img"], By.TAG_NAME, site)
         for image_num in range(len(images)):
             self.store(type=type, data=images[image_num].get_attribute("src"), dataname=dataname+"_"+str(image_num), parent=parent)
+
+    def get_source(self, parent, info_as_node=False):
+        if(self.info_as_node or info_as_node): type = "Source"
+        else: type = None
+        self.store(type=type, data=self.driver.page_source, dataname="code", parent=parent)
 
     def exec_js(self, script, args=None):
         return self.driver.execute_script(script, args)
@@ -358,8 +372,9 @@ class Site(object):
 # TESTS
 crawler1 = Crawler("c1", timeout=10, time_wait=1.5, info_as_node_xml=True, rem=True)
 crawler1.clear_log()
-crawler1.crawl(max_depth=2, load_amount=0, max_tabs=30, autosave=False, save_text=True, save_img=True,
-               site="https://instagram.com/instagram")  # ,condition="True",do_if_condition="""while(True): self.exec_js(\"\"\"document.querySelector("[class='browse-list-category']").click()\"\"\")""")
+crawler1.crawl(max_depth=0, load_amount=1, max_tabs=30, autosave=True, save_text=False, save_img=False, save_source=False,
+            site="instagram.com/instagram")  # ,condition="True",do_if_condition="""while(True): self.exec_js(\"\"\"document.querySelector("[class='browse-list-category']").click()\"\"\")""")
 # ,condition="'https://www.instagram.com/p/' in self.driver.current_url", do_if_condition="self.exec_js(\"\"\"document.querySelector(\"[class=\'dCJp8 afkep coreSpriteHeartOpen _0mzm-\']\").click();\"\"\")")
 # crawler1.test()
+input("Press any key to close: ")
 crawler1.close()
