@@ -38,24 +38,27 @@ class Crawler(object):
         self.processing_tabs = []
         self.loaded_sites = []
         self.sites = {}
+        self.sites_by_tab = {}
         self.info_as_node = info_as_node_xml
         # Proxy
-        print("New crawler ("+str(self.name)+") created.")
+        print(f"New crawler ({self.name}) created.")
 
     def __repr__(self):
-        return "<class '__main__'.Crawler, name='"+str(self.name)+"', loaded "+str(len(self.loaded_sites))+" sites>"
+        return f"<class '__main__'.Crawler, name='{self.name}', site:\"{self.driver.current_url}\", loaded {len(self.loaded_sites)} sites>"
 
     def get_website(self, site=None, parent=None, depth=0):
+        print(f"Crawler.get_website(self, {site}, {parent}, {depth})")
         if(site):
             self.driver.get(site)
             if(parent is None):
                 parent = self.store(
                     type="site", data=self.driver.current_url, dataname="link", root=True)
             self.processing_tabs.append(Site(link=site, tab=self.driver.current_window_handle,
-                                             hrefs=self.get_new_sites(), depth=depth, parent=parent, timeout=-1))
+                                            depth=depth, parent=parent, timeout=-1))
             self.sites[self.processing_tabs[-1]] = depth
+            self.sites_by_tab[self.driver.current_window_handle] = self.processing_tabs[-1]
 
-        print("Trying to get site: " + str(site))
+        print("Trying to get site: {site}")
         if(not self.removelater and True):
             self.removelater = input()
         self.current_domain = self.exec_js("return document.domain")
@@ -79,6 +82,7 @@ class Crawler(object):
         print("[+]Site loaded successfully!")
 
     def crawl(self, site=None, max_depth=1, load_amount=-1, max_tabs=5, save_text=False, save_img=False, save_source=False, condition=None, do_if_condition=None, recrawl=False, autosave=False):
+        print(f"Crawler.crawl(self, {site}, {max_depth}, {load_amount}, {max_tabs}, {save_text}, {save_img}, {save_source}, {condition}, {do_if_condition}, {recrawl}, {autosave})")
         if(site):
             self.get_website(site)
         if(max_tabs > max_depth):
@@ -87,20 +91,24 @@ class Crawler(object):
             try:
                 while(len(self.processing_tabs)):
                     # Open needed tabs
-                    while(len(self.driver.window_handles) < max_tabs and len([site_value for (site_key, site_value) in self.sites.items() if site_value < max_depth and len(site_key.get_hrefs()) and not site_key in self.loaded_sites])):
+                    while(len(self.driver.window_handles) < max_tabs and len([site_value for (site_key, site_value) in self.sites.items() if site_value < max_depth and (len(site_key.get_hrefs())or len(site_key.get_buttons())) and not site_key in self.loaded_sites])):
                         site = [site_key for (site_key, site_value) in sorted(self.sites.items(), key=lambda x: x[1], reverse=True) if site_value < max_depth and len(site_key.get_hrefs())][0]
                         self.driver.switch_to.window(site.get_tab())
-                        site.set_hrefs([new for new in self.get_new_sites() if not new.get_attribute("href") in self.visited_sites.keys()])
-                        link = site.get_hrefs()[0]
-                        link_href = link.get_attribute("href")
-                        if(not link_href in self.visited_sites.keys()):
-                            self.visited_sites[link_href] = 1  # Just in case redirect
-                            site.remove_from_hrefs(link)  # Only useful when last href
-                        parent = self.store(
-                            type="site", data=link_href, dataname="link", root=False, parent=site.get_parent())
-                        self.goto_new_site(
-                            link=link_href, depth=site.get_depth(), parent=parent)
-                        print("Loaded tab number " + str(len(self.driver.window_handles)))
+                        self.get_new_sites()
+                        if(len(site.get_hrefs())):
+                            #Hrefs
+                            link = site.get_hrefs()[0]
+                            link_href = link.get_attribute("href")
+                            if(not link_href in self.visited_sites.keys()):
+                                self.visited_sites[link_href] = 1  # Just in case redirect
+                                site.remove_from_hrefs(link)  # Only useful when last href
+                            parent = self.store(
+                                type="site", data=link_href, dataname="link", root=False, parent=site.get_parent())
+                            self.goto_new_site(
+                                obj=link, type="href", depth=site.get_depth(), parent=parent)
+                        elif(len(site.get_buttons())):
+                            site.set_buttons([])
+                        print(f"Loaded tab number {len(self.driver.window_handles)}")
                     try:  # To free up memory IF went into the while
                         del link, link_href, site, parent
                     except:
@@ -140,8 +148,8 @@ class Crawler(object):
                                 self.processing_tabs.remove(site)
                                 self.driver.switch_to.window(site.get_tab())
                                 self.exec_js("window.close();")
-                                print("Closed depth " + str(self.sites[site]) + " num "+str(len(self.processing_tabs))+" site \"" + str(
-                                site.get_link()) + "\" with " + str(len(site.get_hrefs())) + " links left")
+                                print(f"Closed depth {self.sites[site]} num {len(self.processing_tabs)} site \""
+                                f"{site.get_link()}\" with {len(site.get_hrefs())} links left")
                                 del self.sites[site]
                         time.sleep(self.time_wait_load)
                     # Mark to remove loaded unnecessary tabs
@@ -169,19 +177,53 @@ class Crawler(object):
             self.data_to_xml(self.data_root)
 
     def get_new_sites(self, site=None):
-        # Later it will not only get hrefs
+        print(f"Crawler.get_new_sites(self, {site})")
+        # Later it will get buttons 
         if(site):
             self.get_website(site)
-        final = self.find_in_website(["//a[@href]"], By.XPATH)
-        return final
+        else:
+            site = self.sites_by_tab[self.driver.current_window_handle]
+        hrefs = self.find_in_website(["//a[@href]"], By.XPATH)
+        hrefs = [new for new in hrefs+[added for added in site.get_hrefs() if not added in hrefs] if not new.get_attribute("href") in self.visited_sites.keys()]
+        buttons = self.find_in_website(["button"],By.TAG_NAME)
+        buttons = self.classify_buttons([new for new in buttons+[added for added in site.get_buttons() if not added in buttons] if not new in site.get_accessed_buttons()])
+        site.set_hrefs(hrefs)
+        site.set_buttons(buttons)
+        return {"hrefs":hrefs, "buttons":buttons}
 
-    def goto_new_site(self, link, depth=0, parent=None):
+    def goto_new_site(self, obj, type="href", depth=0, parent=None):
+        print(f"Crawler.goto_new_sites(self, {obj}, {type}, {depth}, {parent})")
         # Later new tab and same tab buttons
         # print(self.driver.current_window_handle)
-        self.exec_js("window.open();")
-        self.driver.switch_to.window(self.driver.window_handles[self.driver.window_handles.index(
+        if(type in ["href",""]):
+            self.exec_js("window.open();")
+            self.driver.switch_to.window(self.driver.window_handles[self.driver.window_handles.index(
             self.driver.current_window_handle)+1])
-        self.get_website(site=link, depth=depth+1, parent=parent)
+            self.get_website(site=obj.get_attribute("href"), depth=depth+1, parent=parent)
+
+    def classify_buttons(self, buttons):
+        print(f"Crawler.classify_buttons(self, {buttons})")
+        classifies = {"loss":[],"kept":[],"links":[]}
+        for button in range(len(buttons)-1): 
+            clink = self.driver.current_url #click+link
+            try:
+                buttons[button].click()
+                if(button):
+                    classifies["kept"].append(buttons[button-1])
+            except:
+                if(button):
+                    classifies["loss"].append(buttons[button-1])
+                    classifies["links"].append(clink)
+                self.driver.back()
+                buttons[button].click()
+        try:
+            buttons[0].get_attribute("class")
+            classifies["kept"].append(buttons[button])
+        except:
+            classifies["loss"].append(buttons[button])
+        return classifies
+
+
 
     def set_userpass(self, user, passwd, domains=None):
         # Not tested.
@@ -206,6 +248,7 @@ class Crawler(object):
             self.userdomains[domains[0]] = (user[0], passwd[0])
 
     def find_in_website(self, search, tag=By.TAG_NAME, site=None):
+        print(f"Crawler.find_in_website(self, {search}, {tag}, {site})")
         if(site):
             self.get_website(site)
         final = []
@@ -213,10 +256,11 @@ class Crawler(object):
             try:
                 final += self.driver.find_elements(tag, searching)
             except:
-                print("No element "+ str(searching) +" found")
+                print(f"No element {searching} found")
         return final
 
     def store(self, type=None, data=None, dataname=None, parent=None, root=False):
+        print(f"Crawler.store(self, {type}, {data}, {dataname}, {parent}, {root})")
         print("Stored: \"" + str(data) + "\"")
         if(type):
             if(parent is None):
@@ -233,6 +277,7 @@ class Crawler(object):
         return parent
 
     def clear_log(self):
+        print("Crawler.clear_log(self)")
         open(self.name+".xml", "w")
 
     def data_to_xml(self, data_root):
@@ -241,9 +286,10 @@ class Crawler(object):
         if(not data_root is None):
             self.data_tree._setroot(data_root)
             self.data_tree.write(self.name+".xml", short_empty_elements=False)
-        print("Visited " + str(len(self.sites.values())+1) + " sites.")
+        print(f"Visited {len(self.sites.values())+1} sites.")
 
     def load_site(self, removed_scroll=[], deep=0):
+        print(f"Crawler.load_site(self, {removed_scroll}, {deep})")
         if(deep < 0):
             return -1 #return true
         loaded = {"Main": -1}
@@ -282,6 +328,7 @@ class Crawler(object):
         return True
 
     def get_text(self, parent, site=None, dataname="text", info_as_node=False):
+        print(f"Crawler.get_text(self, {parent}, {site}, {dataname}, {info_as_node})")
         if(site):
             self.get_website(site)
         if(self.info_as_node or info_as_node): type = dataname
@@ -290,6 +337,7 @@ class Crawler(object):
             self.store(type=type, data=txt.text, dataname=dataname, parent=parent)
 
     def get_images(self, parent, site=None, dataname="img", info_as_node=False):
+        print(f"Crawler.get_images(self, {parent}, {site}, {dataname}, {info_as_node})")
         #I do write various functions so that people can run them in the do_if_condition
         if(site):
             self.get_website(site)
@@ -297,17 +345,20 @@ class Crawler(object):
         else: type = None
         images = self.find_in_website(["img"], By.TAG_NAME, site)
         for image_num in range(len(images)):
-            self.store(type=type, data=images[image_num].get_attribute("src"), dataname=dataname+"_"+str(image_num), parent=parent)
+            self.store(type=type, data=images[image_num].get_attribute("src"), dataname=dataname+f"_{image_num}", parent=parent)
 
     def get_source(self, parent, info_as_node=False):
+        print(f"Crawler.get_images(self, {parent}, {info_as_node})")
         if(self.info_as_node or info_as_node): type = "Source"
         else: type = None
         self.store(type=type, data=self.driver.page_source, dataname="code", parent=parent)
 
     def exec_js(self, script, args=None):
+        print(f"Crawler.get_images(self, {script}, {args})")
         return self.driver.execute_script(script, args)
 
     def close(self):
+        print(f"Crawler.close({self})")
         self.driver.quit()
         del self
 
@@ -316,17 +367,19 @@ class Crawler(object):
 
 
 class Site(object):
-    def __init__(self, link="", tab="", removed_scroll=[], hrefs=[], depth=0, parent=None, timeout=0):
+    def __init__(self, link="", tab="", removed_scroll=[], hrefs=[], buttons=[], depth=0, parent=None, timeout=0):
         self.link = link
         self.hrefs = hrefs
+        self.buttons = buttons
         self.depth = depth
         self.parent = parent
         self.timeout = timeout
         self.tab = tab
         self.removed_scroll = removed_scroll
+        self.accessed_buttons = []
 
     def __repr__(self):
-        return "<class 'main'.Site, depth="+str(self.depth)+", link='"+str(self.link)+"', tab='"+str(self.tab)+"'>"
+        return f"<class 'main'.Site, depth={self.depth}, link='{self.link}', tab='{self.tab}'>"
 
     def set_removed_scroll(self, removed_scroll):
         self.removed_scroll = removed_scroll
@@ -337,15 +390,17 @@ class Site(object):
     def set_hrefs(self, hrefs):
         self.hrefs = hrefs
 
-    def remove_from_hrefs(self, removed):
-        self.hrefs.remove(removed)
-        return len(self.hrefs)
+    def set_buttons(self, buttons):
+        self.buttons = buttons
 
     def set_parent(self, parent):
         self.parent = parent
 
     def set_link(self, link):
         self.link = link
+
+    def set_accessed_buttons(self, accessed):
+        self.accessed_buttons = accessed
 
     def get_tab(self):
         return self.tab
@@ -365,16 +420,33 @@ class Site(object):
     def get_hrefs(self):
         return self.hrefs
 
+    def get_buttons(self):
+        return self.buttons
+
     def get_link(self):
         return self.link
+
+    def get_accessed_buttons(self):
+        return self.accessed_buttons
+
+    def remove_from_hrefs(self, removed):
+        self.hrefs.remove(removed)
+        return len(self.hrefs)
+
+    def add_to_hrefs(self, added):
+        self.hrefs.append(added)
+
+    def add_to_accessed_buttons(self, accessed):
+        self.accessed_buttons.append(accessed)
 
 
 # TESTS
 crawler1 = Crawler("c1", timeout=10, time_wait=1.5, info_as_node_xml=True, rem=True)
 crawler1.clear_log()
-crawler1.crawl(max_depth=0, load_amount=1, max_tabs=30, autosave=True, save_text=False, save_img=False, save_source=False,
-            site="instagram.com/instagram")  # ,condition="True",do_if_condition="""while(True): self.exec_js(\"\"\"document.querySelector("[class='browse-list-category']").click()\"\"\")""")
+crawler1.crawl(max_depth=2, load_amount=1, max_tabs=50, autosave=True, save_text=False, save_img=False, save_source=False,
+            site="https://www.instagram.com/instagram")  # ,condition="True",do_if_condition="""while(True): self.exec_js(\"\"\"document.querySelector("[class='browse-list-category']").click()\"\"\")""")
 # ,condition="'https://www.instagram.com/p/' in self.driver.current_url", do_if_condition="self.exec_js(\"\"\"document.querySelector(\"[class=\'dCJp8 afkep coreSpriteHeartOpen _0mzm-\']\").click();\"\"\")")
 # crawler1.test()
+print(crawler1.get_new_sites())
 input("Press any key to close: ")
 crawler1.close()
