@@ -1,6 +1,12 @@
 # Scraper
 A python selenium bot for data gathering
 
+<a href="https://github.com/mozilla/geckodriver/releases">Geckodriver</a> as the firefox binaries
+
+The scrapper has only been tested on Linux (Debian). In order to run it in any other OS, download
+and overwrite the geckodriver file with the one you downloaded, and rename the new geckodriver as
+"geckodriver"
+
 ###### Classes
 Class Crawler: 
 This class is the bot itself, whose settings will be shared between different crawlings if they are done with the same object
