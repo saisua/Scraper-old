@@ -12,17 +12,29 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
 from selenium.webdriver.firefox.firefox_binary import FirefoxBinary
 from selenium import webdriver
+import _thread
+from sys import argv
 
 class Crawler(object):
-    def __init__(self, crawler_name:str, output:str=None,timeout:float=20, time_wait:float=1.5, info_as_node_xml:bool=False, rem=False):
+    def __init__(self, crawler_name:str, output:str=None,timeout:float=20, time_wait:float=1.5, 
+        info_as_node_xml:bool=False, tabs_per_window:int=1000, rem=False):
         try:
             firefox_capabilities = DesiredCapabilities.FIREFOX
             firefox_capabilities['marionette'] = True
+            firefox_capabilities["dom.popup_maximum"] = tabs_per_window
             options = webdriver.firefox.options.Options()
             options.set_preference("browser.popups.showPopupBlocker",False)
+            binary = FirefoxBinary()
+            profile = webdriver.FirefoxProfile()
+            del profile.DEFAULT_PREFERENCES['frozen']["browser.link.open_newwindow"]
+            profile.set_preference("browser.link.open_newwindow", 3)
+            profile.set_preference("dom.popup_maximum", tabs_per_window)
+            profile.set_preference("browser.dom.window.dump.enabled", False)
+            profile.set_preference("browser.tabs.loadDivertedInBackground", True)
+            profile.set_preference("browser.showPersonalToolbar", False)
             self.driver = webdriver.Firefox(executable_path=(
                 __file__).replace("crawler2.py", "geckodriver"),
-                options=options)
+                options=options, firefox_binary=binary, firefox_profile=profile)
         except Exception as ex:
             print("\n \n")
             print(ex)
@@ -38,6 +50,7 @@ class Crawler(object):
         self.data_root = None
         self.timeoutsec = timeout
         self.time_wait_load = time_wait
+        self.tabs_per_window = tabs_per_window
         self.userdomains = {}
         self.alldom = False
         self.removelater = rem
@@ -195,18 +208,11 @@ class Crawler(object):
     def goto_new_site(self, link, depth=0, parent=None):
         # Later new tab and same tab buttons
         # print(self.driver.current_window_handle)
-        num_tabs_before = len(self.driver.window_handles)
+        #num_tabs_before = len(self.driver.window_handles)
         self.exec_js("window.open();")
-        if(num_tabs_before >= len(self.driver.window_handles)):
-            #self.exec_js("alert('Please, allow pop-ups');")
-            current_window = self.driver.current_window_handle
-            input('Please, allow pop-ups and press enter')
-            if(num_tabs_before >= len(self.driver.window_handles)):
-                num_tabs_before = len(self.driver.window_handles)
-                self.exec_js("window.open();")
-                if(num_tabs_before >= len(self.driver.window_handles)):
-                    raise EnvironmentError("Missing permissions")
-            self.driver.switch_to.window(current_window)
+        if(len(self.driver.window_handles) >= self.tabs_per_window):
+            print("Multi-threading in a later version")
+            raise Exception("Version not compatible with multithreading")
         #Switch to new tab instead of next
         self.driver.switch_to.window(self.driver.window_handles[self.driver.window_handles.index(
             self.driver.current_window_handle)+1])
@@ -402,9 +408,8 @@ class Site(object):
 # TESTS
 crawler1 = Crawler("c1", timeout=10, time_wait=1.5, info_as_node_xml=True, rem=True)
 crawler1.clear_log()
-crawler1.crawl(max_depth=2, load_amount=1, max_tabs=20, autosave=True, save_text=True, save_img=True, save_source=False,
-            site="https://www.instagram.com/instagram")  # ,condition="True",do_if_condition="""while(True): self.exec_js(\"\"\"document.querySelector("[class='browse-list-category']").click()\"\"\")""")
+crawler1.crawl(max_depth=2, load_amount=1, max_tabs=25, autosave=True, save_text=True, save_img=True, save_source=False,
+            site="https://www.instagram.com/instagram")  
+# ,condition="True",do_if_condition="""while(True): self.exec_js(\"\"\"document.querySelector("[class='browse-list-category']").click()\"\"\")""")
 # ,condition="'https://www.instagram.com/p/' in self.driver.current_url", do_if_condition="self.exec_js(\"\"\"document.querySelector(\"[class=\'dCJp8 afkep coreSpriteHeartOpen _0mzm-\']\").click();\"\"\")")
-# crawler1.test()
-input("Press any key to close: ")
 crawler1.close()
