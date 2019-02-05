@@ -8,7 +8,7 @@ Usage: python3 ./scraper.py
 The scrapper has only been tested on Linux (Debian). In order to run it in any other OS, download
 and overwrite the geckodriver file with the one you downloaded, and rename the new geckodriver as
 "geckodriver"(+.exe). 
-Testing in windows 10 ended up as failure
+Running in Windows should work.
 
 Libraries used: <a href="https://docs.seleniumhq.org/">Selenium webdriver</a>, <a href="https://docs.python.org/3/library/xml.etree.elementtree.html?highlight=elementtree">ElementTree XML</a>, <a href="https://docs.python.org/3/library/threading.html?highlight=threading#module-threading">threading</a>, <a href="https://docs.python.org/3/library/itertools.html?highlight=itertools">itertools</a>, <a href="https://docs.python.org/3/library/sys.html?highlight=sys#module-sys">sys</a>, <a href="https://docs.python.org/3/library/os.html?highlight=os#module-os">os</a>, <a href="https://docs.python.org/3/library/time.html?highlight=time#module-time"></a>, <a href="https://docs.python.org/3/library/getpass.html">getpass</a>
 
