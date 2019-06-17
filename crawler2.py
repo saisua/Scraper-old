@@ -5,204 +5,385 @@
 import getpass
 import time
 import os
+from random import randint, choice
 import xml.etree.ElementTree as ET
+# import imageio Save as file
+from skimage import img_as_float, data
+from skimage.io import imread
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
 from selenium.webdriver.firefox.firefox_binary import FirefoxBinary
+from selenium.webdriver.common.proxy import Proxy, ProxyType
+from selenium.webdriver.support.events import EventFiringWebDriver, AbstractEventListener
 from selenium import webdriver
+from image_manager import Image_manager,img_compare_encode,img_face_encode,img_face_load
+#import _thread
+from sys import argv
 
 class Crawler(object):
-    def __init__(self, crawler_name, user=None, passwd=None, timeout=20, time_wait=1.5, info_as_node_xml=False, rem=False):
+    """
+    Despite its name, the crawler object is a browser site manager, with
+    the ability to crawl from any site it's allowed
+    """
+    def __init__(self, crawler_name:str, output:str=None,timeout:float=20, time_wait:float=1.5, 
+                info_as_node_xml:bool=False, tabs_per_window:int=1000, images_known:list=[],
+                find_known_img:bool=False, find_faces_known:bool=False,
+                http_proxy:str=None, ftp_proxy:str=None, ssl_proxy:str=None, socks_proxy:str=None,
+                load_images:bool=True, headless:bool=False, learning:bool=True, rem=False,
+                 width_min:int=420, width_max=1280, height_min:int=420, height_max:int=640):
+                # 420,640 420,1280
         try:
+            
             firefox_capabilities = DesiredCapabilities.FIREFOX
             firefox_capabilities['marionette'] = True
+            firefox_capabilities["dom.popup_maximum"] = tabs_per_window
+
+            options = webdriver.firefox.options.Options()
+            options.set_preference("browser.popups.showPopupBlocker",False)
+            if(headless):
+                options.set_headless()
+            
+            binary = FirefoxBinary()
+
+            profile = webdriver.FirefoxProfile()
+            del profile.DEFAULT_PREFERENCES['frozen']["browser.link.open_newwindow"]
+            profile.set_preference("browser.link.open_newwindow", 3)
+            profile.set_preference("dom.popup_maximum", tabs_per_window)
+            profile.set_preference("browser.dom.window.dump.enabled", False)
+            profile.set_preference("browser.tabs.loadDivertedInBackground", True)
+            profile.set_preference("browser.showPersonalToolbar", False)
+            profile.set_preference("browser.preferences.defaultPerformanceSettings.enabled", False)
+            profile.set_preference("privacy.trackingprotection.enabled", True)
+            profile.set_preference("content.notify.interval", 500000)
+            profile.set_preference("content.notify.ontimer", True)
+            profile.set_preference("content.switch.threshold", 250000)
+            profile.set_preference("browser.cache.memory.capacity", 65536)
+            profile.set_preference("browser.startup.homepage", "about:blank")
+            profile.set_preference("reader.parse-on-load.enabled", False)
+            profile.set_preference("browser.pocket.enabled", False) 
+            profile.set_preference("loop.enabled", False)
+            profile.set_preference("browser.chrome.toolbar_style", 1)
+            profile.set_preference("browser.display.show_image_placeholders", False)
+            profile.set_preference("browser.display.use_document_colors", False)
+            profile.set_preference("browser.display.use_document_fonts", 0)
+            profile.set_preference("browser.display.use_system_colors", False)
+            profile.set_preference("browser.formfill.enable", False)
+            profile.set_preference("browser.helperApps.deleteTempFileOnExit", True)
+            profile.set_preference("browser.shell.checkDefaultBrowser", False)
+            profile.set_preference("browser.startup.homepage", "about:blank")
+            profile.set_preference("browser.startup.page", 0)
+            profile.set_preference("browser.tabs.forceHide", True)
+            profile.set_preference("browser.urlbar.autoFill", False)
+            profile.set_preference("browser.urlbar.autocomplete.enabled", False)
+            profile.set_preference("browser.urlbar.showPopup", False)
+            profile.set_preference("browser.urlbar.showSearch", False)
+            profile.set_preference("extensions.checkCompatibility", False) 
+            profile.set_preference("extensions.checkUpdateSecurity", False)
+            profile.set_preference("extensions.update.autoUpdateEnabled", False)
+            profile.set_preference("extensions.update.enabled", False)
+            profile.set_preference("general.startup.browser", False)
+            profile.set_preference("plugin.default_plugin_disabled", False)
+            profile.set_preference("browser.privatebrowsing.autostart", True)
+            profile.set_preference("navigator.doNotTrack", 1)
+            profile.set_preference("general.useragent.override", '')
+            profile.set_preference('general.platform.override','')
+            profile.set_preference('general.appname.override','')
+            profile.set_preference('general.appversion.override','')
+            profile.set_preference("general.buildID.override", '')
+            profile.set_preference("general.oscpu.override", '')
+            # Not working. I think it's not possible either
+            # It depends in wether useragent was modified or not
+            profile.set_preference('general.webdriver.override',False)
+            profile.set_preference('general.useragent.vendor', '')
+            profile.set_preference("browser.search.countryCode",choice([
+                        "AF","AL","DZ","AS","AD","AO","AQ","AG","AR","AM",
+                        "AW","AU","AT","AZ","BS","BH","BD","BB","BY","BE",
+                        "BZ","BJ","BM","BT","BO","BA","BW","BV","BR","IO",
+                        "BN","BG","BF","BI","KH","CM","CA","CV","KY","CF",
+                        "CF","TD","CL","CN","CX","CC","CO","KM","CG","CD",
+                        "CK","CR","CI","HR","CU","CY","CZ","DK","DJ","DM",
+                        "DO","EC","EG","SV","GQ","ER","EE","ET","FK","FO",
+                        "FJ","FI","FR","GF","PF","TF","GA","GM","GE","DE",
+                        "GH","GI","GR","GL","GD","GP","GU","GT","GN","GW",
+                        "GY","HT","HM","HK","HU","IS","IN","ID","IR","IQ",
+                        "IE","IL","IT","JM","JP","JO","KZ","KE","KI","KP",
+                        "KR","KW","KG","LA","LB","LS","LR","LY","LI","LT",
+                        "LU","MO","MK","MG","MW","MY","MV","ML","MT","MH",
+                        "MQ","MT","MU","YT","MX","FM","MD","MC","ME","MS",
+                        "MA","MZ","MM","NA","NR","NP","NL","AN","NC","NZ",
+                        "NI","NE","NG","NU","NF","MP","NO","OM","PK","PW",
+                        "PS","PA","PG","PY","PE","PH","PN","PL","PT","PR",
+                        "QA","RE","RO","RU","RW","SH","KN","LC","PM","VC",
+                        "WS","SM","ST","SA","SN","RS","SC","SL","SG","SK",
+                        "SI","SB","SO","ZA","GS","ES","LK","SD","SR","SJ",
+                        "SZ","SE","CH","SY","TW","TJ","TZ","TH","TZ","TH",
+                        "TL","TG","TK","TO","TT","TN","TR","TM","TC","TV",
+                        "UG","UA","AE","GB","US","UM","UY","UZ","VU","VE",
+                        "VN","VG","VI","WF","EH","YE","ZM","ZW"]))
+            profile.set_preference("browser.search.region",'')
+            profile.set_preference("browser.search.defaultenginename",'')
+            profile.set_preference("browser.search.order.1",'')
+            
+
+            if(not load_images):
+                profile.set_preference("permissions.default.image", 2)
+
+            if(not http_proxy is None): 
+                webdriver.DesiredCapabilities.FIREFOX['proxy']['httpProxy'] = http_proxy
+            if(not ftp_proxy is None): 
+                webdriver.DesiredCapabilities.FIREFOX['proxy']['ftpProxy'] = ftp_proxy
+            if(not ssl_proxy is None): 
+                webdriver.DesiredCapabilities.FIREFOX['proxy']['sslProxy'] = ssl_proxy
+            if(not socks_proxy is None):
+                profile.set_preference("network.proxy.type", 1)
+                profile.set_preference("network.proxy.socks", socks_proxy[:socks_proxy.find(":")])
+                profile.set_preference("network.proxy.socks_port", int(socks_proxy[socks_proxy.find(":")+1:]))
+    
             self.driver = webdriver.Firefox(executable_path=(
-                __file__).replace("crawler2.py", "")+"geckodriver")
+                    __file__).replace("crawler2.py", "geckodriver"),
+                    options=options, firefox_binary=binary, firefox_profile=profile)
+
+            # Useless
+            if(width_min and width_max and height_min and height_max):
+                self.driver.set_window_position(0, 0)
+                self.driver.set_window_size(randint(width_min,width_max), randint(height_min, height_max))
+
+            if(learning):
+                listener = Listener(self)
+                self.driver = EventFiringWebDriver(self.driver,listener)
+                listener.new_tab_menu()
+
         except Exception as ex:
-            print("\n \n")
+            print("\n")
             print(ex)
-            print("\n \n")
+            print("\n")
             self.driver = webdriver.Firefox()
+
+        self.directory = (__file__)[:-len("crawler2.py")]
+        os.chdir(self.directory)
+
         self.name = str(crawler_name)
-        self.visited_sites = {}
+
+        if(output is None): output = crawler_name
+        self.output = output
+
+        self.visited_sites = {} 
         self.visited_domain = {}
+
         self.data_tree = ET.ElementTree()
         self.data_root = None
+
         self.timeoutsec = timeout
         self.time_wait_load = time_wait
-        self.userdomains = {}
-        self.alldom = False
+
+        self.tabs_per_window = tabs_per_window
+
         self.removelater = rem
+
         self.processing_tabs = []
         self.loaded_sites = []
         self.sites = {}
-        self.sites_by_tab = {}
+
         self.info_as_node = info_as_node_xml
-        # Proxy
+
+
+        self.images_known = dict(zip(images_known,img_compare_encode(images_known)))
+        self.find_known_img = find_known_img
+        self.find_faces_known = find_faces_known
+        
         print(f"New crawler ({self.name}) created.")
 
-    def __repr__(self):
-        return f"<class '__main__'.Crawler, name='{self.name}', site:\"{self.driver.current_url}\", loaded {len(self.loaded_sites)} sites>"
+    def __repr__(self) -> str:
+        return f"<class '__main__'.Crawler, name='{self.name}', loaded {len(self.loaded_sites)} sites>"
 
-    def get_website(self, site=None, parent=None, depth=0):
-        print(f"Crawler.get_website(self, {site}, {parent}, {depth})")
+    # Loads a new site in the current tab
+    def get_website(self, site=None, parent=None, depth:int=0) -> None:
         if(site):
             self.driver.get(site)
+            #self.exec_js("screen = new function() { this.width = 1; this.height = 2 };")
             if(parent is None):
                 parent = self.store(
                     type="site", data=self.driver.current_url, dataname="link", root=True)
             self.processing_tabs.append(Site(link=site, tab=self.driver.current_window_handle,
-                                            depth=depth, parent=parent, timeout=-1))
+                                             hrefs=self.get_new_sites(), depth=depth, parent=parent, timeout=-1))
             self.sites[self.processing_tabs[-1]] = depth
-            self.sites_by_tab[self.driver.current_window_handle] = self.processing_tabs[-1]
 
-        print("Trying to get site: {site}")
-        if(not self.removelater and True):
+        print(f"Trying to get site: {site}")
+        if(not self.removelater and False):
             self.removelater = input()
         self.current_domain = self.exec_js("return document.domain")
-        username = self.find_in_website("username", By.ID)
-        password = self.find_in_website("password", By.ID)
-        if(self.current_domain in self.userdomains.keys()):
-            username.send_keys(self.userdomains[self.current_domain][0])
-            password.send_keys(self.userdomains[self.current_domain][1])
-            self.driver.find_element_by_name("submit").click()
-        elif(self.alldom):
-            username.send_keys(self.userdomains["*"][0])
-            password.send_keys(self.userdomains["*"][1])
-        if(self.driver.current_url in self.visited_sites.keys()):
-            self.visited_sites[self.driver.current_url] += 1
-        else:
-            self.visited_sites[self.driver.current_url] = 1
+
+        self.visited_sites[self.driver.current_url] += 1
+
         if(self.current_domain in self.visited_domain.keys()):
             self.visited_domain[self.current_domain] += 1
         else:
             self.visited_domain[self.current_domain] = 1
-        print("[+]Site loaded successfully!")
 
-    def crawl(self, site=None, max_depth=1, load_amount=-1, max_tabs=5, save_text=False, save_img=False, save_source=False, condition=None, do_if_condition=None, recrawl=False, autosave=False):
-        print(f"Crawler.crawl(self, {site}, {max_depth}, {load_amount}, {max_tabs}, {save_text}, {save_img}, {save_source}, {condition}, {do_if_condition}, {recrawl}, {autosave})")
+        print("[+]Site opened successfully!")
+
+    # Loads and manages recursivelly all sites it can find
+    def crawl(self, site=None, max_depth:int=1, load_amount:int=-1, max_tabs:int=5,
+            record_text:bool=False, record_img:bool=False, record_source:bool=False,
+            condition:str=None, do_if_condition:str=None, recrawl:bool=False, 
+            autosave:bool=False, record_depth:bool=True) -> None:
+
         if(site):
             self.get_website(site)
+
         if(max_tabs > max_depth):
             #num tabs must be at least equal to max depth being opened
             #but max_depth starts at 0.
             try:
                 while(len(self.processing_tabs)):
                     # Open needed tabs
-                    while(len(self.driver.window_handles) < max_tabs and len([site_value for (site_key, site_value) in self.sites.items() if site_value < max_depth and (len(site_key.get_hrefs())or len(site_key.get_buttons())) and not site_key in self.loaded_sites])):
+                    while(len(self.driver.window_handles) < max_tabs and len([site_value for (site_key, site_value) in self.sites.items() if site_value < max_depth and len(site_key.get_hrefs()) and not site_key in self.loaded_sites])):
                         site = [site_key for (site_key, site_value) in sorted(self.sites.items(), key=lambda x: x[1], reverse=True) if site_value < max_depth and len(site_key.get_hrefs())][0]
+                        
                         self.driver.switch_to.window(site.get_tab())
-                        self.get_new_sites()
-                        if(len(site.get_hrefs())):
-                            #Hrefs
-                            link = site.get_hrefs()[0]
-                            link_href = link.get_attribute("href")
-                            if(not link_href in self.visited_sites.keys()):
-                                self.visited_sites[link_href] = 1  # Just in case redirect
-                                site.remove_from_hrefs(link)  # Only useful when last href
-                            parent = self.store(
-                                type="site", data=link_href, dataname="link", root=False, parent=site.get_parent())
-                            self.goto_new_site(
-                                obj=link, type="href", depth=site.get_depth(), parent=parent)
-                        elif(len(site.get_buttons())):
-                            site.set_buttons([])
+                        
+                        site.set_hrefs([new for new in self.get_new_sites() if not new.get_attribute("href") in self.visited_sites.keys()])
+                        link = site.get_hrefs()[0]
+                        link_href = link.get_attribute("href")
+                        if(not link_href in self.visited_sites.keys()):
+                            self.visited_sites[link_href] = 1  # Just in case redirect
+                            site.remove_from_hrefs(link)  # Only useful when last href
+                        
+                        parent = self.store(
+                            type="site", data=link_href, dataname="link", root=False, parent=site.get_parent())
+                        
+                        self.goto_new_site(
+                            link=link_href, depth=site.get_depth(), parent=parent)
+                        
                         print(f"Loaded tab number {len(self.driver.window_handles)}")
                     try:  # To free up memory IF went into the while
                         del link, link_href, site, parent
-                    except:
-                        pass
+                    except: pass
+
 
                     # Load all tabs
                     if(load_amount >= 0):
                         to_remove = []
+                        
                         for site in self.processing_tabs:  # Last tab opened does not load
                             if(not site.get_timeout() >= self.timeoutsec):
+                                
                                 self.driver.switch_to.window(site.get_tab())
-                                loaded_before = site.get_removed_scroll()
+                                
+                                loaded_before = site.get_removed_scroll()[:]
                                 loaded = self.load_site(
                                     removed_scroll=loaded_before, deep=load_amount)
+                                
                                 if(loaded.__class__.__name__ == "list" and site.get_timeout() < self.timeoutsec):
-                                    if(len(loaded) > len(loaded_before)):
+                                    if(len(loaded) > len(loaded_before) and not site.get_depth == max_tabs):
                                         print("Restarted timeout!")
                                         site.set_timeout(0)
-                                    else:
-                                        site.set_timeout(site.get_timeout()+1)
-                                    site.set_removed_scroll(loaded)
-                                elif(not len(site.get_hrefs())):
+                                    
+                                    site.set_removed_scroll(loaded[:])
+                                elif(not len(site.get_hrefs()) or (site.get_depth() == max_depth and site.get_timeout() > 0)):
+                                    # Has the site loaded entirely? If the site depth is max_depth
+                                    # the amount of href will never go down
                                     to_remove.append(site)
-                            if(not site in self.loaded_sites and (site.get_depth() == max_depth or site.get_timeout() >= self.timeoutsec)):
-                                to_remove.append(site)
+                                
+                                site.set_timeout(site.get_timeout()+1)
+                            
+                                del loaded, loaded_before
+
+                            if(not site in self.loaded_sites and (not len(site.get_hrefs()) or site.get_timeout() >= self.timeoutsec)):
+                                if(not site in to_remove):
+                                    to_remove.append(site)
                             # dont delete if got all links but not loaded
-                            elif(site in self.loaded_sites and (not len(site.get_hrefs()) or site.get_depth() == max_depth)):
+                            elif(site in self.loaded_sites and (not len(site.get_hrefs()) or site.get_depth() == max_depth or site.get_timeout() >= self.timeoutsec)):
                                 # Actually delete marked tabs
                                 if(site.get_timeout() >= self.timeoutsec):  # Remove later debug purpose
                                     print("Timeout >.<")
                                 else:
                                     print("Site full loaded")
+                                
                                 if(condition and do_if_condition):
                                     if(eval(condition)):
                                         print("Do_if_condition: ", end="")
                                         print(eval(do_if_condition))
+                                
                                 self.processing_tabs.remove(site)
+                                
                                 self.driver.switch_to.window(site.get_tab())
+                                
                                 self.exec_js("window.close();")
+                                
                                 print(f"Closed depth {self.sites[site]} num {len(self.processing_tabs)} site \""
-                                f"{site.get_link()}\" with {len(site.get_hrefs())} links left")
+                                f"{site.get_link()}\" ({site.get_tab()}) with unopened {len(site.get_hrefs())} links")
+                                
+                                if(site in to_remove):
+                                    to_remove.remove(site)
                                 del self.sites[site]
+                        
                         time.sleep(self.time_wait_load)
                     # Mark to remove loaded unnecessary tabs
                     if(len(to_remove) > 0):
                         for removing in to_remove:
                             try:  # Sometimes tab is closed but not removed form list
                                 self.driver.switch_to.window(removing.get_tab())
-                                if(save_text):
-                                    self.get_text(parent=removing.get_parent())
-                                if(save_img):
-                                    self.get_images(parent=removing.get_parent())
-                                if(save_source):
-                                    self.get_source(parent=removing.get_parent())
                                 
+                                if(record_text):
+                                    self.get_text(parent=removing.get_parent())
+                                if(record_img):
+                                    self.get_images(parent=removing.get_parent())
+                                if(record_source):
+                                    self.get_source(parent=removing.get_parent())
+                                if(record_depth):
+                                    if(self.info_as_node):
+                                        type = "depth"
+                                    else: type = None
+                                    self.store(type=type, data=removing.get_depth(), dataname="depth", root=False, parent=removing.get_parent())
+                                    del type
+
                                 if(removing.get_depth()==max_depth):
                                     for link in removing.get_hrefs():
-                                        self.store(type="site", data=link.get_attribute("href"), dataname="link", root=False, parent=removing.get_parent())
+                                        try:
+                                            self.store(type="site", data=link.get_attribute("href"), dataname="link", root=False, parent=removing.get_parent())
+                                        except: continue
+
                                 self.loaded_sites.append(removing)
+                                
                                 del removing
+                            
                             except Exception as err:
                                 print(err)
+                    
                     if(autosave): self.data_to_xml(self.data_root)
-            except Exception as err: #TMP replace autosave
+            
+            except Exception as err:
                 print(err)
+            
             self.data_to_xml(self.data_root)
 
-    def get_new_sites(self, site=None):
-        print(f"Crawler.get_new_sites(self, {site})")
-        # Later it will get buttons 
+    # Runs loads a new site and returns its hrefs
+    def get_new_sites(self, site:str=None) -> list:
+        # Later it will not only get hrefs
         if(site):
             self.get_website(site)
-        else:
-            site = self.sites_by_tab[self.driver.current_window_handle]
-        hrefs = self.find_in_website(["//a[@href]"], By.XPATH)
-        hrefs = [new for new in hrefs+[added for added in site.get_hrefs() if not added in hrefs] if not new.get_attribute("href") in self.visited_sites.keys()]
-        buttons = self.find_in_website(["button"],By.TAG_NAME)
-        buttons = self.classify_buttons([new for new in buttons+[added for added in site.get_buttons() if not added in buttons] if not new in site.get_accessed_buttons()])
-        site.set_hrefs(hrefs)
-        site.set_buttons(buttons)
-        return {"hrefs":hrefs, "buttons":buttons}
 
-    def goto_new_site(self, obj, type="href", depth=0, parent=None):
-        print(f"Crawler.goto_new_sites(self, {obj}, {type}, {depth}, {parent})")
-        # Later new tab and same tab buttons
-        # print(self.driver.current_window_handle)
-        if(type in ["href",""]):
-            self.exec_js("window.open();")
-            self.driver.switch_to.window(self.driver.window_handles[self.driver.window_handles.index(
-            self.driver.current_window_handle)+1])
-            self.get_website(site=obj.get_attribute("href"), depth=depth+1, parent=parent)
+        final = self.find_in_website(["//a[@href]"], By.XPATH)
+        return final
 
-    def classify_buttons(self, buttons):
-        print(f"Crawler.classify_buttons(self, {buttons})")
+    # Given a list of buttons determines if it may cause data loss
+    def classify_buttons(self) -> dict:
+        print("Crawler.classify_buttons(self)")
+
+        last = self.driver.current_window_handle
+
+        self.goto_new_site(self.driver.current_url)
+
+        a = self.find_in_website(["button"]) #"li","div"
+
+        b = self.exec_js("return arguments[0].click",a)
+
+        buttons = [self.exec_js("return 'click' in arguments[0]",button) for button in 
+                    self.find_in_website(["button","li","div"])]
+
         classifies = {"loss":[],"kept":[],"links":[]}
         for button in range(len(buttons)-1): 
             clink = self.driver.current_url #click+link
@@ -221,36 +402,34 @@ class Crawler(object):
             classifies["kept"].append(buttons[button])
         except:
             classifies["loss"].append(buttons[button])
+        
+        self.exec_js("window.close();")
+        self.driver.switch_to.window(last)
+
         return classifies
 
+    # Opens a new tab if possible and loads link
+    def goto_new_site(self, link:str, depth:int=0, parent:object=None) -> None:
+        # Later new tab and same tab buttons
 
-
-    def set_userpass(self, user, passwd, domains=None):
-        # Not tested.
-        self.alldom = False
-        if(user.__class__.__name__ != "list"):
-            user = [user]
-        if(passwd.__class__.__name__ != "list"):
-            passwd = [passwd]
-        if(not domains):
-            self.userdomains["*"] = (user[0], passwd[0])
-            self.alldom = True
-            return 1
-        if(len(user) != len(passwd)):
-            return -1
-        if(domains.__class__.__name__ == "list"):
-            for num in range(len(user)):
-                try:
-                    self.userdomains[domains[num]] = (user[num], passwd[num])
-                except:
-                    self.userdomains[domains[0]] = (user[num], passwd[num])
+        if(len(self.driver.window_handles) >= self.tabs_per_window):
+            print("Multi-threading in a later version")
+            raise Exception("Version not compatible with multithreading")
         else:
-            self.userdomains[domains[0]] = (user[0], passwd[0])
+            self.exec_js("window.open();")
+        
+        #Switch to new tab instead of next
+        self.driver.switch_to.window(self.driver.window_handles[self.driver.window_handles.index(
+            self.driver.current_window_handle)+1])
+        
+        self.get_website(site=link, depth=depth+1, parent=parent)
 
-    def find_in_website(self, search, tag=By.TAG_NAME, site=None):
-        print(f"Crawler.find_in_website(self, {search}, {tag}, {site})")
+    # Find all elements as told by its arguments. 
+    # More info search for "Selenium find_elements"
+    def find_in_website(self, search:list, tag:str=By.TAG_NAME, site:str=None) -> list:
         if(site):
             self.get_website(site)
+        
         final = []
         for searching in search:
             try:
@@ -259,194 +438,276 @@ class Crawler(object):
                 print(f"No element {searching} found")
         return final
 
-    def store(self, type=None, data=None, dataname=None, parent=None, root=False):
-        print(f"Crawler.store(self, {type}, {data}, {dataname}, {parent}, {root})")
-        print("Stored: \"" + str(data) + "\"")
+    def store(self, type:str=None, data:str=None, dataname:str=None,
+                parent:object=None, root:object=False) -> object:
+        #print(f"Stored: \"{data}\"")
         if(type):
             if(parent is None):
                 parent = ET.Element(type)
             else:
                 parent = ET.SubElement(parent, str(type))
+            
             if(data and dataname):
                 parent.set(str(dataname), str(data))
         else:
             if(data and dataname):
                 parent.set(str(dataname), str(data))
+        
         if(root):
             self.data_root = parent
+        
         return parent
 
     def clear_log(self):
-        print("Crawler.clear_log(self)")
-        open(self.name+".xml", "w")
+        open(self.output+".xml", "w")
 
-    def data_to_xml(self, data_root):
+    # Stores data in self.name".xml"
+    def data_to_xml(self, data_root:object) -> None:
+        os.chdir(self.directory)
+        
         for site_key, site_value in self.sites.items():
             self.store(data=site_value, dataname="times_visited", parent=site_key.get_parent())
+        
         if(not data_root is None):
             self.data_tree._setroot(data_root)
-            self.data_tree.write(self.name+".xml", short_empty_elements=False)
-        print(f"Visited {len(self.sites.values())+1} sites.")
+            self.data_tree.write(f"{self.name}.xml", short_empty_elements=False)
 
-    def load_site(self, removed_scroll=[], deep=0):
-        print(f"Crawler.load_site(self, {removed_scroll}, {deep})")
+    # Tries to interact with the tab to load dynamically-loaded data
+    def load_site(self, removed_scroll:list=[], deep:int=0, first_scroll_steps:int=100) -> None:
+        #Quan es passa removed_scroll?
         if(deep < 0):
-            return -1 #return true
-        loaded = {"Main": -1}
-        if (not "Main" in removed_scroll and deep >= 0):
-            if(self.exec_js("return window.scrollY+window.innerHeight!=this.document.body.scrollHeight")):
-                self.exec_js("window.scrollTo(0, document.body.scrollHeight)")
-            else:
-                print("Main Scroll loaded")
-                removed_scroll.append("Main")
-                loaded["Main"] = 0
+            return -1 #to return true
+        loaded = {}
         if (deep > 0):
             try:
-                #print([element.get_attribute("class") for element in self.find_in_website(["div", "pre"], By.TAG_NAME)])
-                s_list = [element for element in self.find_in_website(["div", "pre"], By.TAG_NAME) if(
-                    element.value_of_css_property("overflow") in ["auto", "scroll", ""] and not element in removed_scroll)]
+                s_list = [element for element in self.find_in_website(["div", "pre"], By.TAG_NAME) if
+                    element.value_of_css_property("overflow") in ["auto", "scroll", ""] and not element in removed_scroll]
                 # ^ think add instead of reload
-                #print("ex1" in [e.get_attribute("class") for e in self.find_in_website(["div", "pre"], By.TAG_NAME)]) #debug
-                #print(len(self.find_in_website(["div", "pre"], By.TAG_NAME)))
-                #print(self.find_in_website(["ex1","ex2","ex3","ex4"],By.CLASS_NAME))
                 loaded["Scrolls"] = -len(s_list)
                 for scroll in s_list:  # Select & down arrow
                     if(not scroll):
                         print("Scroll None")
                         continue 
-                    #print("Scroll " + str(scroll.get_attribute("class"))+ " overflow: " + str(scroll.value_of_css_property("overflow")) + " result: " + str(self.exec_js("if(arguments[0].scrollTop!=arguments[0].scrollTopMax || arguments[0].scrollLeft!=arguments[0].scrollLeftMax){return true}else{return false};", scroll)))
-                    if(self.exec_js("if(arguments[0].scrollTop!=arguments[0].scrollTopMax || arguments[0].scrollLeft!=arguments[0].scrollLeftMax){return true}else{return false};", scroll)):
-                        self.exec_js(
-                            "arguments[0].scrollTo(arguments[0].scrollLeftMax, arguments[0].scrollTopMax)", scroll)
+
+                    if(self.exec_js("if(arguments[0].scrollTop!=arguments[0].scrollTopMax "
+                                    "|| arguments[0].scrollLeft!=arguments[0].scrollLeftMax)"
+                                    "{return true}else{return false};", scroll)):
+                        if(not self.exec_js("return arguments[0].scrollTop;", scroll)):
+                            stepX_size = int(self.exec_js("return arguments[0].scrollLeftMax;", scroll)/first_scroll_steps) + 1
+                            stepY_size = int(self.exec_js("return arguments[0].scrollTopMax;", scroll)/first_scroll_steps) + 1
+                            for steps in range(1,first_scroll_steps+1):
+                                self.exec_js(f"arguments[0].scroll({steps*stepX_size},"
+                                    f"{steps*stepY_size});", scroll)
+                        self.exec_js("arguments[0].scrollTo(arguments[0].scrollLeftMax,"
+                                " arguments[0].scrollTopMax);", scroll)
                     else:
                         print("Scroll loaded")
                         removed_scroll.append(scroll)
             except Exception as err:
                 print(err)
-        if(any(loaded.values())):
+        
+        if (not "Main" in removed_scroll and deep >= 0):
+            loaded["Main"] = -1
+            if(self.exec_js("return window.scrollY+window.innerHeight!=this.document.body.scrollHeight;")):
+                self.exec_js("window.scrollTo(0, document.body.scrollHeight);")
+            else:
+                removed_scroll.append("Main")
+                loaded["Main"] = 0
+        
+        print(loaded)
+        if(len(loaded) and any(loaded.values())):
             return removed_scroll
         return True
 
-    def get_text(self, parent, site=None, dataname="text", info_as_node=False):
-        print(f"Crawler.get_text(self, {parent}, {site}, {dataname}, {info_as_node})")
+    # Runs script as a script in the current tab
+    def exec_js(self, script:str, args:list=None):
+        return self.driver.execute_script(script, args)
+
+    ### GET (from site)
+
+    def get_text(self, parent, site=None, dataname="text", info_as_node=False) -> None:
         if(site):
             self.get_website(site)
+
         if(self.info_as_node or info_as_node): type = dataname
         else: type = None
+        
         for txt in self.find_in_website(["body"], By.TAG_NAME, site):
             self.store(type=type, data=txt.text, dataname=dataname, parent=parent)
 
-    def get_images(self, parent, site=None, dataname="img", info_as_node=False):
-        print(f"Crawler.get_images(self, {parent}, {site}, {dataname}, {info_as_node})")
+    def get_images(self, parent, site=None, dataname="img", info_as_node=False) -> None:
         #I do write various functions so that people can run them in the do_if_condition
         if(site):
             self.get_website(site)
+        
         if(self.info_as_node or info_as_node): type = dataname
         else: type = None
+        
         images = self.find_in_website(["img"], By.TAG_NAME, site)
-        for image_num in range(len(images)):
-            self.store(type=type, data=images[image_num].get_attribute("src"), dataname=dataname+f"_{image_num}", parent=parent)
+        
+        if(len(self.images_known)):
+            print("Starting image comparison; This will take some time.")
 
-    def get_source(self, parent, info_as_node=False):
-        print(f"Crawler.get_images(self, {parent}, {info_as_node})")
+            comparison = Image_manager().compare_images(self.images_known, 
+                img_compare_encode([image.get_attribute("src") for image in images]))
+            
+            if(type is None): datype = None 
+            else: datype = "Img_analysis"
+            
+            print("[+] Done")
+        
+        for image_num in range(len(images)):
+            image_parent = self.store(type=type, data=images[image_num].get_attribute("src"), dataname=f"{dataname}_{image_num}", parent=parent)
+            
+            if(len(self.images_known)):
+                for file_name,comp in comparison.items():
+                    image_parent = self.store(type=datype, dataname=f"{file_name}_ssim", data=comp[image_num][0], parent=image_parent)
+                    self.store(type=None, dataname=f"{file_name}_mse", data=comp[image_num][1], parent=image_parent)
+
+    def get_source(self, parent:object, site=None, info_as_node:bool=False) -> None:
+        if(site): self.get_website(site)
+        
         if(self.info_as_node or info_as_node): type = "Source"
         else: type = None
+        
         self.store(type=type, data=self.driver.page_source, dataname="code", parent=parent)
 
-    def exec_js(self, script, args=None):
-        print(f"Crawler.get_images(self, {script}, {args})")
-        return self.driver.execute_script(script, args)
+    def get_iframes(self, parent:object, site=None, dataname:str="iframe", info_as_node:bool=False) -> None:
+        if(site):
+            self.get_website(site)
 
-    def close(self):
-        print(f"Crawler.close({self})")
+        if(self.info_as_node or info_as_node): type = dataname
+        else: type = None
+        
+        for iframe in self.find_in_website(["iframe"], By.TAG_NAME, site):
+            self.store(type=type, data=iframe.src, dataname=dataname, parent=parent)
+
+    # Close the browser
+    def close(self) -> None:
         self.driver.quit()
         del self
 
     def test(self):
         print("do_something()")
 
-
 class Site(object):
-    def __init__(self, link="", tab="", removed_scroll=[], hrefs=[], buttons=[], depth=0, parent=None, timeout=0):
+    """
+    Site objects are all sites the crawler is visiting
+    """
+    def __init__(self, link:str="", tab:str="", removed_scroll:list=[],
+                hrefs:list=[], buttons:list=[], depth:int=0, parent:object=None, 
+                timeout:int=0):
         self.link = link
         self.hrefs = hrefs
-        self.buttons = buttons
         self.depth = depth
         self.parent = parent
         self.timeout = timeout
         self.tab = tab
         self.removed_scroll = removed_scroll
-        self.accessed_buttons = []
-
-    def __repr__(self):
-        return f"<class 'main'.Site, depth={self.depth}, link='{self.link}', tab='{self.tab}'>"
-
-    def set_removed_scroll(self, removed_scroll):
-        self.removed_scroll = removed_scroll
-
-    def set_timeout(self, timeout):
-        self.timeout = timeout
-
-    def set_hrefs(self, hrefs):
-        self.hrefs = hrefs
-
-    def set_buttons(self, buttons):
         self.buttons = buttons
 
-    def set_parent(self, parent):
+    def __repr__(self) -> str:
+        return f"<class 'main'.Site, depth={self.depth}, link='{self.link}', tab='{self.tab}'>"
+
+    ### SET
+
+    def set_removed_scroll(self, removed_scroll:list) -> None:
+        self.removed_scroll = removed_scroll
+
+    def set_timeout(self, timeout:int) -> None:
+        self.timeout = timeout
+
+    def set_hrefs(self, hrefs:list) -> None:
+        self.hrefs = hrefs
+
+    def set_parent(self, parent:object) -> None:
         self.parent = parent
 
-    def set_link(self, link):
+    def set_link(self, link:str) -> None:
         self.link = link
 
-    def set_accessed_buttons(self, accessed):
-        self.accessed_buttons = accessed
+    def set_buttons(self, buttons:list) -> None:
+        self.buttons = buttons
 
-    def get_tab(self):
-        return self.tab
+    def set_tab(self, tab:str) -> str:
+        self.tab = tab
 
-    def get_timeout(self):
-        return self.timeout
-
-    def get_removed_scroll(self):
-        return self.removed_scroll
-
-    def get_depth(self):
-        return self.depth
-
-    def get_parent(self):
-        return self.parent
-
-    def get_hrefs(self):
-        return self.hrefs
-
-    def get_buttons(self):
-        return self.buttons
-
-    def get_link(self):
-        return self.link
-
-    def get_accessed_buttons(self):
-        return self.accessed_buttons
-
-    def remove_from_hrefs(self, removed):
+    ### REMOVE
+    
+    def remove_from_hrefs(self, removed:str) -> int:
         self.hrefs.remove(removed)
         return len(self.hrefs)
 
-    def add_to_hrefs(self, added):
-        self.hrefs.append(added)
+    ### GET
 
-    def add_to_accessed_buttons(self, accessed):
-        self.accessed_buttons.append(accessed)
+    def get_tab(self) -> str:
+        return self.tab
 
+    def get_timeout(self) -> int:
+        return self.timeout
+
+    def get_removed_scroll(self) -> list:
+        return self.removed_scroll
+
+    def get_depth(self) -> int:
+        return self.depth
+
+    def get_parent(self) -> object:
+        return self.parent
+
+    def get_hrefs(self) -> list:
+        return self.hrefs
+
+    def get_link(self) -> str:
+        return self.link
+
+    def get_buttons(self) -> list:
+        return self.buttons
+
+    """buttons = property(get_buttons)
+    link = property(get_link,set_link)
+    hrefs = property(get_hrefs)
+    parent = property(get_parent,set_parent)
+    depth = property(get_depth)
+    removed_scroll = property(get_removed_scroll)
+    tab = property(get_tab, set_tab)
+    timeout = property(get_timeout,set_timeout)"""
+
+class Listener(AbstractEventListener):
+
+    """ Non working user interactive browser for selecting buttons """
+
+    def __init__(self, crawler:"Crawler"=None):
+        self.recorded = []
+        if(crawler is None): crawler = Crawler("learn",learning=True)
+        self.crawler = crawler
+
+    def after_click(self, element, driver):
+        print(element)
+        #if(self.recording): self.recorded.append(element)
+        if(not driver.find_element(By.ID, "selenium_button_menu")):
+            self.new_tab_menu()
+
+    def new_tab_menu(self):
+        self.crawler.exec_js(
+                """var added = document.createElement('div'), place = document.body || document.getElementsByTagName('body')[0];
+                added.style='position:fixed;width:200px;height:200px;top:110px;right:10px;padding:16px;border:2px solid #000000;z-index:100;background-color:#E5E4D7;'
+                added.innerHTML = 'Record <label class="switch"><input type="checkbox"><span class="slider round"></span></label>';
+                added.id = 'selenium_button_menu'
+                place.appendChild(added);""")
 
 # TESTS
-crawler1 = Crawler("c1", timeout=10, time_wait=1.5, info_as_node_xml=True, rem=True)
+crawler1 = Crawler("c1", timeout=10, time_wait=1.5, info_as_node_xml=True)#,
+                    #,images_known=["test.jpg"])#
 crawler1.clear_log()
-crawler1.crawl(max_depth=2, load_amount=1, max_tabs=50, autosave=True, save_text=False, save_img=False, save_source=False,
-            site="https://www.instagram.com/instagram")  # ,condition="True",do_if_condition="""while(True): self.exec_js(\"\"\"document.querySelector("[class='browse-list-category']").click()\"\"\")""")
+
+#crawler1.get_website("https://www.skyscanner.net/transport/flights-from/vlc/190212/190219/?adults=1&children=0&adultsv2=1&childrenv2=&infants=0&cabinclass=economy&rtn=1&preferdirects=false&outboundaltsenabled=false&inboundaltsenabled=false&ref=home",)
+#crawler1.classify_buttons()
+crawler1.crawl(max_depth=0, load_amount=1, max_tabs=25, autosave=True,
+            record_text=False, record_img=True, record_source=False,
+            site="https://bestfirms.com/what-is-my-screen-resolution/")#site="https://www.instagram.com/instagram")  
+
+crawler1.test()
+# ,condition="True",do_if_condition="""while(True): self.exec_js(\"\"\"document.querySelector("[class='browse-list-category']").click()\"\"\")""")
 # ,condition="'https://www.instagram.com/p/' in self.driver.current_url", do_if_condition="self.exec_js(\"\"\"document.querySelector(\"[class=\'dCJp8 afkep coreSpriteHeartOpen _0mzm-\']\").click();\"\"\")")
-# crawler1.test()
-print(crawler1.get_new_sites())
-input("Press any key to close: ")
 crawler1.close()
