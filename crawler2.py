@@ -18,7 +18,9 @@ from selenium.webdriver.firefox.firefox_binary import FirefoxBinary
 from selenium.webdriver.common.proxy import Proxy, ProxyType
 from selenium.webdriver.support.events import EventFiringWebDriver, AbstractEventListener
 from selenium import webdriver
+from collections import defaultdict
 from image_manager import Image_manager,img_compare_encode,img_face_encode,img_face_load
+import logging
 #import _thread
 from sys import argv
 
@@ -32,7 +34,7 @@ class Crawler(object):
                 find_known_img:bool=False, find_faces_known:bool=False,
                 http_proxy:str=None, ftp_proxy:str=None, ssl_proxy:str=None, socks_proxy:str=None,
                 load_images:bool=True, headless:bool=False, learning:bool=True, rem=False,
-                 width_min:int=420, width_max=1280, height_min:int=420, height_max:int=640):
+                width_min:int=420, width_max=1280, height_min:int=420, height_max:int=640):
                 # 420,640 420,1280
         try:
             
@@ -125,6 +127,7 @@ class Crawler(object):
             profile.set_preference("browser.search.region",'')
             profile.set_preference("browser.search.defaultenginename",'')
             profile.set_preference("browser.search.order.1",'')
+            profile.set_preference("security.fileuri.strict_origin_policy",False)
             
 
             if(not load_images):
@@ -169,8 +172,8 @@ class Crawler(object):
         if(output is None): output = crawler_name
         self.output = output
 
-        self.visited_sites = {} 
-        self.visited_domain = {}
+        self.visited_sites = defaultdict(lambda : 0)
+        self.visited_domain = defaultdict(lambda : 0)
 
         self.data_tree = ET.ElementTree()
         self.data_root = None
@@ -217,10 +220,7 @@ class Crawler(object):
 
         self.visited_sites[self.driver.current_url] += 1
 
-        if(self.current_domain in self.visited_domain.keys()):
-            self.visited_domain[self.current_domain] += 1
-        else:
-            self.visited_domain[self.current_domain] = 1
+        self.visited_domain[self.current_domain] += 1
 
         print("[+]Site opened successfully!")
 
@@ -375,14 +375,12 @@ class Crawler(object):
 
         last = self.driver.current_window_handle
 
+        buttons = self.exec_js("return ($('body, body *').contents().filter(function() {"
+                                "return $._data(this, 'events') != undefined})).toArray()")
+
         self.goto_new_site(self.driver.current_url)
 
-        a = self.find_in_website(["button"]) #"li","div"
-
-        b = self.exec_js("return arguments[0].click",a)
-
-        buttons = [self.exec_js("return 'click' in arguments[0]",button) for button in 
-                    self.find_in_website(["button","li","div"])]
+        if(not len(self.find_in_website)): pass
 
         classifies = {"loss":[],"kept":[],"links":[]}
         for button in range(len(buttons)-1): 
@@ -430,6 +428,8 @@ class Crawler(object):
         if(site):
             self.get_website(site)
         
+        if(not type(search) is list and not type(search is tuple)): search = [search] 
+
         final = []
         for searching in search:
             try:
@@ -500,9 +500,10 @@ class Crawler(object):
                                     f"{steps*stepY_size});", scroll)
                         self.exec_js("arguments[0].scrollTo(arguments[0].scrollLeftMax,"
                                 " arguments[0].scrollTopMax);", scroll)
-                    else:
+                    elif(not scroll in removed_scroll):
                         print("Scroll loaded")
                         removed_scroll.append(scroll)
+                        loaded["Scrolls"] += 1
             except Exception as err:
                 print(err)
         
@@ -525,15 +526,22 @@ class Crawler(object):
 
     ### GET (from site)
 
-    def get_text(self, parent, site=None, dataname="text", info_as_node=False) -> None:
+    def get_text(self, parent, site:str=None, dataname:str="text", info_as_node:bool=False, 
+            keep_dom_nodes:bool=True) -> None: #Change when working to keep... = True
         if(site):
             self.get_website(site)
 
         if(self.info_as_node or info_as_node): type = dataname
         else: type = None
         
-        for txt in self.find_in_website(["body"], By.TAG_NAME, site):
-            self.store(type=type, data=txt.text, dataname=dataname, parent=parent)
+        if(keep_dom_nodes):
+            parent = self.store(type=type, data='', dataname=dataname, parent=parent)
+            for txt_node in self.exec_js(
+                    "return ($('body, body *').contents().filter(function() {"
+                    "return this.nodeType == Node.TEXT_NODE && this.textContent.trim() != '';})).toArray();"):                
+                self.store(type=f"sub{type}", data=txt_node["textContent"], dataname=dataname, parent=parent)
+        else:
+            self.store(type=type, data=self.exec_js("return $('body').text();"), dataname=dataname, parent=parent)
 
     def get_images(self, parent, site=None, dataname="img", info_as_node=False) -> None:
         #I do write various functions so that people can run them in the do_if_condition
@@ -569,8 +577,8 @@ class Crawler(object):
         
         if(self.info_as_node or info_as_node): type = "Source"
         else: type = None
-        
-        self.store(type=type, data=self.driver.page_source, dataname="code", parent=parent)
+
+        self.store(type=type, data=self.driver.page_source, dataname="innerHTML", parent=parent)
 
     def get_iframes(self, parent:object, site=None, dataname:str="iframe", info_as_node:bool=False) -> None:
         if(site):
@@ -697,17 +705,17 @@ class Listener(AbstractEventListener):
                 place.appendChild(added);""")
 
 # TESTS
-crawler1 = Crawler("c1", timeout=10, time_wait=1.5, info_as_node_xml=True)#,
-                    #,images_known=["test.jpg"])#
-crawler1.clear_log()
+if __name__ == "__main__":
+    crawler1 = Crawler("c1", timeout=10, time_wait=1.5, info_as_node_xml=True, height_min=False)#,
+                        #,images_known=["test.jpg"])#
+    crawler1.clear_log()
 
-#crawler1.get_website("https://www.skyscanner.net/transport/flights-from/vlc/190212/190219/?adults=1&children=0&adultsv2=1&childrenv2=&infants=0&cabinclass=economy&rtn=1&preferdirects=false&outboundaltsenabled=false&inboundaltsenabled=false&ref=home",)
-#crawler1.classify_buttons()
-crawler1.crawl(max_depth=0, load_amount=1, max_tabs=25, autosave=True,
-            record_text=False, record_img=True, record_source=False,
-            site="https://bestfirms.com/what-is-my-screen-resolution/")#site="https://www.instagram.com/instagram")  
+    #crawler1.get_website("https://www.skyscanner.net/transport/flights-from/vlc/190212/190219/?adults=1&children=0&adultsv2=1&childrenv2=&infants=0&cabinclass=economy&rtn=1&preferdirects=false&outboundaltsenabled=false&inboundaltsenabled=false&ref=home",)
+    #crawler1.classify_buttons()
+    crawler1.crawl(max_depth=0, load_amount=1, max_tabs=25, autosave=True,
+                record_text=True, record_img=True, record_source=True,
+                site="https://www.poemas-del-alma.com/")#site="https://www.instagram.com/instagram")  
 
-crawler1.test()
-# ,condition="True",do_if_condition="""while(True): self.exec_js(\"\"\"document.querySelector("[class='browse-list-category']").click()\"\"\")""")
-# ,condition="'https://www.instagram.com/p/' in self.driver.current_url", do_if_condition="self.exec_js(\"\"\"document.querySelector(\"[class=\'dCJp8 afkep coreSpriteHeartOpen _0mzm-\']\").click();\"\"\")")
-crawler1.close()
+    # ,condition="True",do_if_condition="""while(True): self.exec_js(\"\"\"document.querySelector("[class='browse-list-category']").click()\"\"\")""")
+    # ,condition="'https://www.instagram.com/p/' in self.driver.current_url", do_if_condition="self.exec_js(\"\"\"document.querySelector(\"[class=\'dCJp8 afkep coreSpriteHeartOpen _0mzm-\']\").click();\"\"\")")
+    crawler1.close()
