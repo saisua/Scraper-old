@@ -5,6 +5,7 @@ import sys
 import itertools
 import os
 from string import punctuation
+from collections import defaultdict
 
 
 # Thread create and run with treading module
@@ -21,6 +22,10 @@ class Search_thread(threading.Thread):
         # search = [tag, search, text, obj]
         for search in self.search_list:
             if(search is None): break
+            #Not working    
+            elif(search[1] is True): 
+                self.analizer.add_to_result("True",{search[3]:[search[2],[0]]})    
+                continue
             position = search[2].find(search[1])
             result = []
             while (position >= 0):
@@ -88,6 +93,8 @@ class Analizer(object):
     def get_result_raw(self) -> dict:
         return self.result
 
+    # returns the position of the words in each found text
+    # thought of to be used by a programmer
     def get_result(self) -> list:
         result = []
         for places in self.result.items():
@@ -95,21 +102,21 @@ class Analizer(object):
                 result.append(list(place.items())[0][1][1])
         return result
 
-    def get_result_word(self, limits:list=[",",";","'","\"",".","\n"," "]) -> dict:
-        result = {}
+    # returns the result word and some next and before based on its arguments
+    def get_result_word(self, words_before=1, words_after=1) -> dict:
+        result = defaultdict(lambda : [])
+        words_before, words_after = abs(words_before), abs(words_after)
         for search,places in self.result.items():
-            result[search] = []
-            for place in places:
-                text, positions = list(place.items())[0][1]
-                words = []
-                for pos in positions:
-                    before = list(filter(lambda num: num > 0,[text[:pos+1][::-1].find(limit) for limit in limits]))
-                    after =  list(filter(lambda num: num > 0, [text[pos:].find(limit) for limit in limits]))
-                    if(not len(before)): before = [10]
-                    if(not len(after)): after = [10]
-                    words.append(text[pos-min(before)+1
-                                        :pos+min(after)])
-                result[search].append(words)
+            if(search == "True"):
+                result[search] = [place[0].split() for place_dict in places for place in place_dict.values()]
+                continue
+
+            for place_dict in places:
+                for place in place_dict.values():
+                    words = place[0].split()
+                    word_index = str(words)[:str(words).find(search)].count(',')
+                    result[search].append(words[word_index-words_before if word_index-words_before >= 0 else 0 : 
+                                            word_index+words_after if word_index + words_before < len(words) else len(words)])
         return result
 
     # {search: {obj: [text, result]}}
@@ -124,23 +131,34 @@ class Analizer(object):
                     print(f"\n[{num}] {text[pos-bef_margin:pos+aft_margin]}")
                     num += 1
 
-    def save_result(self, file_output, bef_margin:int=20, aft_margin:int=40) -> None:
+    # Saves the complete info into a .txt file
+    def save_result(self, file_output, words_before:int=1, words_after:int=1) -> None:
+        words_dict = self.get_result_word(words_before, words_after)
         for search, places in self.result.items():
             file_output.write(f"\n\n###[{search}] \n\n")
             num = 0
-            for place in places:
+            
+            for place_num, place in enumerate(places):
                 found = list(place.items())[0]
                 text, positions = found[1]
                 tag = found[0].tag
+                words = words_dict[search][place_num]
+                if(search != "True"):
+                    word_index = str(words)[:str(words).find(search)].count(',')
                 for pos in positions:
-                    file_output.write(f"[{num}] [{tag}] {text[pos-bef_margin:pos+aft_margin]} \n\n")
+                    pos_before = text[:pos][::-1].find(words[0][::-1])+len(words[0]) if search != "True" and word_index-words_before >= 0 else 0
+                    pos_after = text[pos:].find(words[-1])+len(words[-1])+1 if search != "True" and word_index+words_after < len(text) else len(text)
+                    file_output.write(f"[{num}] [{tag}] "
+                            f"{text[0 if pos_before < 0 else pos_before : len(text) if pos_after < 0 else pos_after]}"
+                            " \n\n")
                     num += 1
 
-    def result_statistics(self, file_output, limits_list:list=[",",";","'","\"",".","\n"," "]) -> None:
+    # Syntetizes the info given by save_result into a more human-friendly file
+    def result_statistics(self, file_output, most_common_num:int=10, words_before:int=0, words_after:int=0) -> None:
         print("Starting file statistics")
         for search, places in self.result.items():
             file_output.write(f"\n\n###[{search}]")
-            words = self.get_result_word(limits=limits_list)[search]
+            words = self.get_result_word(words_before, words_after)[search]
             places,words = zip(*[(place,word) for place,word in sorted(zip(places,words), 
                         key=lambda kw: len(kw[1]),
                         reverse=True)])
@@ -163,18 +181,43 @@ class Analizer(object):
             file_output.write("\n   Number of coincidences\n")
             for obj_num in range(len(places)):
                 tag,info = list(list(places[obj_num].keys())[0].attrib.items())[0]
-                file_output.write(f" - - obj_{obj_num}({tag}:{info[:10]}) has {len(words[obj_num])} items.\n")
+                file_output.write(f" - - obj_{obj_num}({tag}:'{info[:20]}') has {len(words[obj_num])} items.\n")
 
             file_output.write("\n    Most frequent coincidences:\n")
-            for word, times in sorted(words_freq.items(), key=lambda kv: kv[1], reverse=True)[:10]:
-                file_output.write(f"     {word}:{times}\n")
+            for word, times in sorted(words_freq.items(), key=lambda kv: kv[1], reverse=True)[:most_common_num]:
+                file_output.write(f"     {word} : {times}\n")
 
             file_output.write("\n    Words:\n")
             for obj_num in range(len(places)):
                 tag,info = list(list(places[obj_num].keys())[0].attrib.items())[0]
-                file_output.write(f"\n - - obj_{obj_num}({tag}:{info[:10]}):\n")
+                file_output.write(f"\n - - obj_{obj_num}({tag}:'{info[:20]}'):\n")
                 for word, times in sorted(words_freq_list[obj_num].items(), key=lambda kv: kv[1], reverse=True):
-                    file_output.write(f"      {word}:{times}\n")
+                    file_output.write(f"      {word} : {times}\n")
+
+    # Using the result index info, retrieve full info from the .txt file
+    def retrieve_from_code(self, search:str=None, num:int=None):
+        while(search is None):
+            print(f"Valid search keywords: {', '.join(self.result.keys())}")
+            search = input("Please insert the search keyword: ")
+            if(not search in self.result.keys()): 
+                search = None
+
+        while(num is None):
+            print(f"Valid numbers: 0-{len(self.result[search])-1}")
+            try:
+                num = int(input("Please insert the number you want to retrieve: "))
+            except: continue
+
+            if(not abs(num) < len(self.result[search])): 
+                num = None
+
+        print(f"\n\nSelected '{search}' number {num}:\n")
+        for retrieved in self.result[search][num].values():
+            print(retrieved[0], end="\n\n")
+
+        
+
+
             
 
 
@@ -185,7 +228,8 @@ if __name__ == "__main__": #I'll move this to a function to improve speed
     file = ET.parse(filename)
     root = file.getroot()
     search_in = root #Search starting point
-    search = {"@":{"*":["*"]}, "#":{"*":["*"]}} #Debug
+    search = {True:{"iframe":["*"]}, "@":{"*":["*"]}} #Debug
     f = Analizer(search, search_in, 8)
     f.save_result(open(filename.replace(".xml",".txt"),"w"))
     f.result_statistics(open(filename.replace(".xml",".stats"),"w"))
+    f.retrieve_from_code()
