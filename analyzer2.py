@@ -115,8 +115,8 @@ class Analizer(object):
                 for place in place_dict.values():
                     words = place[0].split()
                     word_index = str(words)[:str(words).find(search)].count(',')
-                    result[search].append(words[word_index-words_before if word_index-words_before >= 0 else 0 : 
-                                            word_index+words_after if word_index + words_before < len(words) else len(words)])
+                    result[search].append(words[word_index-words_before if word_index-words_before > 0 else 0 : 
+                                            word_index+words_after + 1 if word_index + words_before + 1 < len(words) else len(words)])
         return result
 
     # {search: {obj: [text, result]}}
@@ -215,12 +215,6 @@ class Analizer(object):
         for retrieved in self.result[search][num].values():
             print(retrieved[0], end="\n\n")
 
-        
-
-
-            
-
-
 if __name__ == "__main__": #I'll move this to a function to improve speed
     file_dir = __file__[:-len("analyzer2.py")]
     os.chdir(file_dir) 
@@ -228,8 +222,7 @@ if __name__ == "__main__": #I'll move this to a function to improve speed
     file = ET.parse(filename)
     root = file.getroot()
     search_in = root #Search starting point
-    search = {True:{"iframe":["*"]}, "@":{"*":["*"]}} #Debug
+    search = {"fembed":{"iframe":["*"]}} #Debug
     f = Analizer(search, search_in, 8)
     f.save_result(open(filename.replace(".xml",".txt"),"w"))
     f.result_statistics(open(filename.replace(".xml",".stats"),"w"))
-    f.retrieve_from_code()
