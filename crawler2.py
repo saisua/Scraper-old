@@ -24,6 +24,7 @@ from selenium.webdriver.support.events import EventFiringWebDriver, AbstractEven
 from selenium import webdriver
 from collections import defaultdict
 from tldextract import extract
+from datetime import datetime
 
 from image_manager import Image_manager,img_compare_encode,img_face_encode,img_face_load
 #import _thread
@@ -52,6 +53,7 @@ class Crawler(object):
             options.set_preference("browser.popups.showPopupBlocker",False)
 
             if(headless):
+                #DeprecationWarning: use setter for headless property instead of options.set_headless()
                 options.set_headless()
 
             profile = webdriver.FirefoxProfile()
@@ -182,6 +184,7 @@ class Crawler(object):
             profile.set_preference("browser.newtabpage.activity-stream.asrouter.userprefs.cfr.addons", False)
             profile.set_preference("browser.newtabpage.activity-stream.asrouter.userprefs.cfr.features", False)
             profile.set_preference("browser.search.suggest.enabled", False)
+            profile.set_preference("xpinstall.whitelist.required", True)
             
 
 
@@ -260,6 +263,8 @@ class Crawler(object):
         self.images_known = dict(zip(images_known,img_compare_encode(images_known)))
         self.find_known_img = find_known_img
         self.find_faces_known = find_faces_known
+
+        self.time_created = datetime.now()
         
         logging.info(f"New crawler ({self.name}) created.")
 
@@ -402,35 +407,41 @@ class Crawler(object):
             
                 del loaded, loaded_before
 
-            if(not site in self.loaded_sites and (not len(site.get_hrefs()) or site.get_timeout() >= self.timeout_load)):
+            #if(not site in self.loaded_sites and ((not len(site.get_hrefs()) and site.get_depth() < max_depth) and site.get_timeout() >= self.timeout_load)):
+            # The one above was made by thinking, the one below by karnaugh     
+            if((not len(site.get_hrefs()) and site in self.loaded_sites) or 
+                        (site.get_timeout() >= self.timeout_load and not site.get_depth() < max_depth) or
+                        (site.get_timeout() >= self.timeout_load and len(site.get_hrefs())) or 
+                        (site.get_depth() < max_depth and len(site.get_hrefs()) and not site.get_timeout() >= self.timeout_load)):
                 if(not site in to_remove):
                     to_remove.append(site)
             # dont delete if got all links but not loaded
-            elif(site in self.loaded_sites and (not len(site.get_hrefs()) or site.get_depth() == max_depth or site.get_timeout() >= self.timeout_load)):
-                # Actually delete marked tabs
-                if(site.get_timeout() >= self.timeout_load):  # Remove later debug purpose
-                    logging.warning("Timeout >.<")
+            #elif(site in self.loaded_sites and (not len(site.get_hrefs()) or site.get_depth() == max_depth or site.get_timeout() >= self.timeout_load)):
                 else:
-                    logging.debug("Site full loaded")
-                
-                if(condition and do_if_condition):
-                    if(eval(condition)):
-                        logging.info("Do_if_condition: ", end="")
-                        logging.info(eval(do_if_condition))
-                
-                self.processing_tabs.remove(site)
-                5
-                self.driver.switch_to.window(site.get_tab())
-                
-                self.exec_js("window.close();")
-                
-                logging.info(f"Closed depth {self.sites[site]} num {len(self.processing_tabs)} site \""
-                f"{site.get_link()}\" ({site.get_tab()}) with unopened {len(site.get_hrefs())} links")
-                
-                if(site in to_remove):
-                    to_remove.remove(site)
-                del self.sites[site]
-        
+                    # Actually delete marked tabs
+                    if(site.get_timeout() == self.timeout_load):  # Remove later debug purpose
+                        logging.warning("Timeout >.<")
+                    else:
+                        logging.debug("Site full loaded")
+                    
+                    if(condition and do_if_condition):
+                        if(eval(condition)):
+                            logging.info("Do_if_condition: ", end="")
+                            logging.info(eval(do_if_condition))
+                    
+                    self.processing_tabs.remove(site)
+
+                    self.driver.switch_to.window(site.get_tab())
+                    
+                    self.exec_js("window.close();")
+                    
+                    logging.info(f"Closed depth {self.sites[site]} num {len(self.processing_tabs)} site \""
+                    f"{site.get_link()}\" ({site.get_tab()}) with unopened {len(site.get_hrefs())} links")
+                    
+                    if(site in to_remove):
+                        to_remove.remove(site)
+                    del self.sites[site]
+            
         time.sleep(self.time_wait_load)
 
         return to_remove
@@ -723,6 +734,7 @@ class Crawler(object):
 
     # Close the browser
     def close(self) -> None:
+        logging.info(f"The crawler was created in {self.time_created}")
         self.driver.quit()
         del self
 
@@ -839,13 +851,13 @@ class Listener(AbstractEventListener):
 if __name__ == "__main__":
     logging.basicConfig(format="%(asctime)s %(levelname)s | %(message)s", level=logging.INFO)
 
-    crawler1 = Crawler("c1", timeout_load=5, time_wait=1.5, info_as_node_xml=True, height_min=False)#,
+    crawler1 = Crawler("c1", timeout_load=5, time_wait=1.5, info_as_node_xml=True, height_min=False, headless=True)#,
                         #,images_known=["test.jpg"])#
     crawler1.clear_log()
 
     #crawler1.get_website("https://www.skyscanner.net/transport/flights-from/vlc/1905212/190219/?adults=1&children=0&adultsv2=1&childrenv2=&infants=0&cabinclass=economy&rtn=1&preferdirects=false&outboundaltsenabled=false&inboundaltsenabled=false&ref=home",)
     #crawler1.classify_buttons()
-    crawler1.crawl(max_depth=1, load_amount=1, max_tabs=25, autosave=True, forbidden_domains=["duckduckgo.com","twitter.com","accounts.google.com", "spreadprivacy.com", "donttrack.us", "www.reddit.com"],
+    crawler1.crawl(max_depth=2, load_amount=1, max_tabs=25, autosave=True, forbidden_domains=["duckduckgo.com","twitter.com","accounts.google.com", "spreadprivacy.com", "donttrack.us", "www.reddit.com", "reddit.com", "disqus.com"],
                 record_text=False, record_img=False, record_source=False, record_iframes=True,
                 site="https://duckduckgo.com/ver%20barbie%20pelicula%20online?ia=web")#site="https://www.instagram.com/instagram")  
 
