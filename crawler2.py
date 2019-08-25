@@ -17,7 +17,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, StaleElementReferenceException
 from selenium.webdriver.firefox.firefox_binary import FirefoxBinary
 from selenium.webdriver.common.proxy import Proxy, ProxyType
 from selenium.webdriver.support.events import EventFiringWebDriver, AbstractEventListener
@@ -209,7 +209,7 @@ class Crawler(object):
             if(not ssl_proxy is None): 
                 webdriver.DesiredCapabilities.FIREFOX['proxy']['sslProxy'] = ssl_proxy
             if(not socks_proxy is None):
-                profile.set_preference("network.proxy.type", 1)
+                profile.set_preference("network.proxy.typ_e", 1)
                 profile.set_preference("network.proxy.socks", socks_proxy[:socks_proxy.find(":")])
                 profile.set_preference("network.proxy.socks_port", int(socks_proxy[socks_proxy.find(":")+1:]))
     
@@ -257,6 +257,7 @@ class Crawler(object):
         self.processing_tabs = []
         self.loaded_sites = []
         self.sites = {}
+        self.to_remove = []
 
         self.info_as_node = info_as_node_xml
 
@@ -284,7 +285,7 @@ class Crawler(object):
             #self.exec_js("screen = new function() { this.width = 1; this.height = 2 };")
             if(parent is None):
                 parent = self.store(
-                    type="site", data=self.driver.current_url, dataname="link", root=True)
+                    typ_e="site", data=self.driver.current_url, dataname="link", root=True)
             self.processing_tabs.append(Site(link=site, tab=self.driver.current_window_handle,
                                             hrefs=self.get_new_sites(forbidden_domains=forbidden_domains, allowed_domains=allowed_domains), 
                                             depth=depth, parent=parent, timeout=-1))
@@ -331,24 +332,25 @@ class Crawler(object):
         if(max_tabs > max_depth):
             #num tabs must be at least equal to max depth being opened
             #but max_depth starts at 0.
-            try:
-                while(len(self.processing_tabs)):
-                    # Open needed tabs
-                    self.crawl_new_tab(max_depth, max_tabs, forbidden_domains=forbidden_domains, allowed_domains=allowed_domains)
+            #try:
+            while(len(self.processing_tabs)):
+                # Open needed tabs
+                self.crawl_new_tab(max_depth, max_tabs, forbidden_domains=forbidden_domains, allowed_domains=allowed_domains)
 
-                    # Load all tabs
-                    if(load_amount >= 0):
-                        self.crawl_load_remove_tabs(load_amount, max_depth, max_tabs, record_text, record_img,
-                                                        record_source, record_depth, record_iframes, condition, 
-                                                        do_if_condition)
-                        # Treat buttons
-                        #logging.info(self.classify_buttons())
-                        
-                    if(autosave): self.data_to_xml(self.data_root)
+                # Load all tabs
+                if(load_amount >= 0):
+                    self.crawl_load_remove_tabs(load_amount, max_depth, max_tabs, record_text, record_img,
+                                                    record_source, record_depth, record_iframes, condition, 
+                                                    do_if_condition)
+                    # Treat buttons
+                    #logging.info(self.classify_buttons())
+                    
+                if(autosave): self.data_to_xml(self.data_root)
 
             
-            except Exception as err:
-                logging.error(err)
+            #except Exception as err:
+                #raise err
+                #logging.error(err)
             
             self.data_to_xml(self.data_root)
 
@@ -361,6 +363,9 @@ class Crawler(object):
             self.driver.switch_to.window(site.get_tab())
             
             site.set_hrefs([new for new in self.get_new_sites(forbidden_domains=forbidden_domains, allowed_domains=allowed_domains) if not new.get_attribute("href") in self.visited_sites.keys()])
+            
+            if(not len(site.get_hrefs())): continue
+
             link = site.get_hrefs()[0]
             link_href = link.get_attribute("href")
             if(not link_href in self.visited_sites.keys()):
@@ -368,7 +373,7 @@ class Crawler(object):
                 site.remove_from_hrefs(link)  # Only useful when last href
             
             parent = self.store(
-                type="site", data=link_href, dataname="link", root=False, parent=site.get_parent())
+                typ_e="site", data=link_href, dataname="link", root=False, parent=site.get_parent())
             
             self.goto_new_site(
                 link=link_href, depth=site.get_depth(), parent=parent)
@@ -380,10 +385,8 @@ class Crawler(object):
 
     def crawl_load_tabs(self, load_amount:int=-1, max_depth:int=1, max_tabs:int=5, condition:str=False, 
                         do_if_condition:str=False) -> list:
-        to_remove = []
-        
         for site in self.processing_tabs:  # Last tab opened does not load
-            if(not site.get_timeout() >= self.timeout_load):
+            if(site.get_timeout() < self.timeout_load):
                 
                 self.driver.switch_to.window(site.get_tab())
                 
@@ -391,7 +394,7 @@ class Crawler(object):
                 loaded = self.load_site(
                     removed_scroll=loaded_before, deep=load_amount)
                 
-                if(loaded.__class__.__name__ == "list" and site.get_timeout() < self.timeout_load):
+                if(type(loaded) == list and site.get_timeout() < self.timeout_load):
                     if(len(loaded) > len(loaded_before) and not site.get_depth == max_tabs):
                         logging.warning("Restarted timeout!")
                         site.set_timeout(0)
@@ -400,7 +403,7 @@ class Crawler(object):
                 elif(not len(site.get_hrefs()) or (site.get_depth() == max_depth and site.get_timeout() > 0)):
                     # Has the site loaded entirely? If the site depth is max_depth
                     # the amount of href will never go down
-                    to_remove.append(site)
+                    self.to_remove.append(site)
                 
                 site.set_timeout(site.get_timeout()+1)
                 logging.info(f"Site {site.get_link()} increased timeout to {site.get_timeout()}")
@@ -410,13 +413,14 @@ class Crawler(object):
             #if(not site in self.loaded_sites and ((not len(site.get_hrefs()) and site.get_depth() < max_depth) and site.get_timeout() >= self.timeout_load)):
             # The one above was made by thinking, the one below by karnaugh     
             if((not len(site.get_hrefs()) and site in self.loaded_sites) or 
-                        (site.get_timeout() >= self.timeout_load and not site.get_depth() < max_depth) or
-                        (site.get_timeout() >= self.timeout_load and len(site.get_hrefs())) or 
-                        (site.get_depth() < max_depth and len(site.get_hrefs()) and not site.get_timeout() >= self.timeout_load)):
-                if(not site in to_remove):
-                    to_remove.append(site)
-            # dont delete if got all links but not loaded
-            #elif(site in self.loaded_sites and (not len(site.get_hrefs()) or site.get_depth() == max_depth or site.get_timeout() >= self.timeout_load)):
+                        (not len(site.get_hrefs()) and site.get_timeout() >= self.timeout_load) or
+                        (site.get_timeout() >= self.timeout_load and not site.get_depth() < max_depth) or 
+                        (site in self.loaded_sites and not site.get_timeout() >= self.timeout_load and 
+                        not site.get_depth() < max_depth)):
+                if(not site in self.to_remove):
+                    self.to_remove.append(site)
+                # dont delete if got all links but not loaded
+                #elif(site in self.loaded_sites and (not len(site.get_hrefs()) or site.get_depth() == max_depth or site.get_timeout() >= self.timeout_load)):
                 else:
                     # Actually delete marked tabs
                     if(site.get_timeout() == self.timeout_load):  # Remove later debug purpose
@@ -438,18 +442,22 @@ class Crawler(object):
                     logging.info(f"Closed depth {self.sites[site]} num {len(self.processing_tabs)} site \""
                     f"{site.get_link()}\" ({site.get_tab()}) with unopened {len(site.get_hrefs())} links")
                     
-                    if(site in to_remove):
-                        to_remove.remove(site)
+                    if(site in self.to_remove):
+                        self.to_remove.remove(site)
                     del self.sites[site]
             
         time.sleep(self.time_wait_load)
 
-        return to_remove
+        return self.to_remove
 
-    def crawl_remove_tabs(self, to_remove:list, max_depth:int=1, record_text:bool=False, record_img:bool=False,
+    def crawl_remove_tabs(self, max_depth:int=1, record_text:bool=False, record_img:bool=False,
                             record_source:bool=False, record_depth:bool=True, record_iframes:bool=False) -> None:
-        if(len(to_remove) > 0):
-            for removing in to_remove:
+
+        # iframes are not being recorded
+        self.to_remove = [valid for valid in self.to_remove if valid.get_tab() in self.driver.window_handles]
+        
+        if(len(self.to_remove) > 0):
+            for removing in self.to_remove:
                 try:  # Sometimes tab is closed but not removed form list
                     self.driver.switch_to.window(removing.get_tab())
                     
@@ -461,17 +469,17 @@ class Crawler(object):
                         self.get_source(parent=removing.get_parent())
                     if(record_depth):
                         if(self.info_as_node):
-                            type = "depth"
-                        else: type = None
-                        self.store(type=type, data=removing.get_depth(), dataname="depth", root=False, parent=removing.get_parent())
-                        del type
+                            typ_e = "depth"
+                        else: typ_e = None
+                        self.store(typ_e=typ_e, data=removing.get_depth(), dataname="depth", root=False, parent=removing.get_parent())
+                        del typ_e
                     if(record_iframes):
                         self.get_iframes(parent=removing.get_parent())
 
                     if(removing.get_depth()==max_depth):
                         for link in removing.get_hrefs():
                             try:
-                                self.store(type="site", data=link.get_attribute("href"), dataname="link", root=False, parent=removing.get_parent())
+                                self.store(typ_e="site", data=link.get_attribute("href"), dataname="link", root=False, parent=removing.get_parent())
                             except: continue
 
                     self.loaded_sites.append(removing)
@@ -482,8 +490,8 @@ class Crawler(object):
     def crawl_load_remove_tabs(self, load_amount:int=-1, max_depth:int=1, max_tabs:int=5, record_text:bool=False,
                                 record_img:bool=False, record_source:bool=False, record_depth:bool=True, record_iframes:bool=False,
                                 condition:str=False, do_if_condition:str=False) -> None:
-        self.crawl_remove_tabs(self.crawl_load_tabs(load_amount, max_depth, max_tabs, condition, do_if_condition),
-                                    max_depth, record_text, record_img, record_source, record_depth, record_iframes)
+        self.crawl_load_tabs(load_amount, max_depth, max_tabs, condition, do_if_condition)
+        self.crawl_remove_tabs(max_depth, record_text, record_img, record_source, record_depth, record_iframes)
 
     # Runs loads a new site and returns its hrefs
     def get_new_sites(self, site:str=None, forbidden_domains:list=[], allowed_domains:list=['*']) -> list:
@@ -491,7 +499,22 @@ class Crawler(object):
         if(site):
             self.get_website(site)
 
-        final = [link for link in self.find_in_website(["//a[@href]"], By.XPATH) if not '.'.join(extract(link.get_attribute('href'))[1 if extract(link.get_attribute('href'))[0]=='' else 0:]) in forbidden_domains]
+        final = []
+        tab = self.driver.current_window_handle
+        for link in self.find_in_website(["//a[@href]"], By.XPATH):
+            try: 
+                domain = extract(link.get_attribute('href'))
+                if(not '.'.join(domain[1 if domain[0]=='' else 0:]) in forbidden_domains): 
+                    final.append(link)
+            except StaleElementReferenceException:
+                logging.error("Missing element. Checking for popups")
+                if(self.driver.current_window_handle != tab):
+                    try:
+                        self.driver.switch_to.window(tab)
+                        domain = extract(link.get_attribute('href'))
+                        if(not '.'.join(domain[1 if domain[0]=='' else 0:]) in forbidden_domains): 
+                            final.append(link)
+                    except: continue
         
         if(not '*' in allowed_domains):
             final = [link for link in final if '.'.join(extract(link.get_attribute('href'))[1 if extract(link.get_attribute('href'))[0]=='' else 0:]) in allowed_domains]
@@ -578,14 +601,14 @@ class Crawler(object):
                 logging.warning(f"No element {searching} found")
         return final
 
-    def store(self, type:str=None, data:str=None, dataname:str=None,
+    def store(self, typ_e:str=None, data:str=None, dataname:str=None,
                 parent:object=None, root:object=False) -> object:
         logging.debug(f"Stored: \"{data}\"")
-        if(type):
+        if(typ_e):
             if(parent is None):
-                parent = ET.Element(type)
+                parent = ET.Element(typ_e)
             else:
-                parent = ET.SubElement(parent, str(type))
+                parent = ET.SubElement(parent, str(typ_e))
             
             if(data and dataname):
                 parent.set(str(dataname), str(data))
@@ -673,25 +696,25 @@ class Crawler(object):
         if(site):
             self.get_website(site)
 
-        if(self.info_as_node or info_as_node): type = dataname
-        else: type = None
+        if(self.info_as_node or info_as_node): typ_e = dataname
+        else: typ_e = None
         
         if(keep_dom_nodes):
-            parent = self.store(type=type, data='', dataname=dataname, parent=parent)
+            parent = self.store(typ_e=typ_e, data='', dataname=dataname, parent=parent)
             for txt_node in self.exec_js(
                     "return (jQuery('body, body *').contents().filter(function() {"
-                    "return this.nodeType == Node.TEXT_NODE && this.textContent.trim() != '';})).toArray();"):                
-                self.store(type=f"sub{type}", data=txt_node["textContent"], dataname=dataname, parent=parent)
+                    "return this.nodetyp_e == Node.TEXT_NODE && this.textContent.trim() != '';})).toArray();"):                
+                self.store(typ_e=f"sub{typ_e}", data=txt_node["textContent"], dataname=dataname, parent=parent)
         else:
-            self.store(type=type, data=self.exec_js("return jQuery('body').text();"), dataname=dataname, parent=parent)
+            self.store(typ_e=typ_e, data=self.exec_js("return jQuery('body').text();"), dataname=dataname, parent=parent)
 
     def get_images(self, parent, site=None, dataname="img", info_as_node=False) -> None:
         #I do write various functions so that people can run them in the do_if_condition
         if(site):
             self.get_website(site)
         
-        if(self.info_as_node or info_as_node): type = dataname
-        else: type = None
+        if(self.info_as_node or info_as_node): typ_e = dataname
+        else: typ_e = None
         
         images = self.find_in_website(["img"], By.TAG_NAME, site)
         
@@ -701,40 +724,40 @@ class Crawler(object):
             comparison = Image_manager().compare_images(self.images_known, 
                 img_compare_encode([image.get_attribute("src") for image in images]))
             
-            if(type is None): datype = None 
-            else: datype = "Img_analysis"
+            if(typ_e is None): datyp_e = None 
+            else: datyp_e = "Img_analysis"
             
             logging.info("[+] Done")
         
         for image_num in range(len(images)):
-            image_parent = self.store(type=type, data=images[image_num].get_attribute("src"), dataname=f"{dataname}_{image_num}", parent=parent)
+            image_parent = self.store(typ_e=typ_e, data=images[image_num].get_attribute("src"), dataname=f"{dataname}_{image_num}", parent=parent)
             
             if(len(self.images_known)):
                 for file_name,comp in comparison.items():
-                    image_parent = self.store(type=datype, dataname=f"{file_name}_ssim", data=comp[image_num][0], parent=image_parent)
-                    self.store(type=None, dataname=f"{file_name}_mse", data=comp[image_num][1], parent=image_parent)
+                    image_parent = self.store(typ_e=datyp_e, dataname=f"{file_name}_ssim", data=comp[image_num][0], parent=image_parent)
+                    self.store(typ_e=None, dataname=f"{file_name}_mse", data=comp[image_num][1], parent=image_parent)
 
     def get_source(self, parent:object, site=None, info_as_node:bool=False) -> None:
         if(site): self.get_website(site)
         
-        if(self.info_as_node or info_as_node): type = "Source"
-        else: type = None
+        if(self.info_as_node or info_as_node): typ_e = "Source"
+        else: typ_e = None
 
-        self.store(type=type, data=self.driver.page_source, dataname="innerHTML", parent=parent)
+        self.store(typ_e=typ_e, data=self.driver.page_source, dataname="innerHTML", parent=parent)
 
     def get_iframes(self, parent:object, site=None, dataname:str="iframe", info_as_node:bool=False) -> None:
         if(site):
             self.get_website(site)
 
-        if(self.info_as_node or info_as_node): type = dataname
-        else: type = None
+        if(self.info_as_node or info_as_node): typ_e = dataname
+        else: typ_e = None
         
-        for iframe in self.find_in_website(["iframe"], By.TAG_NAME, site):
-            self.store(type=type, data=iframe.get_attribute("src"), dataname=dataname, parent=parent)
+        for iframe in self.find_in_website(["iframe"], By.TAG_NAME):
+            self.store(typ_e=typ_e, data=iframe.get_attribute("src"), dataname=dataname, parent=parent)
 
     # Close the browser
     def close(self) -> None:
-        logging.info(f"The crawler was created in {self.time_created}")
+        logging.info(f"Closing {self.name} (created in {self.time_created})")
         self.driver.quit()
         del self
 
@@ -843,7 +866,7 @@ class Listener(AbstractEventListener):
         self.crawler.exec_js(
                 """var added = document.createElement('div'), place = document.body || document.getElementsByTagName('body')[0];
                 added.style='position:fixed;width:200px;height:200px;top:110px;right:10px;padding:16px;border:2px solid #000000;z-index:100;background-color:#E5E4D7;'
-                added.innerHTML = 'Record <label class="switch"><input type="checkbox"><span class="slider round"></span></label>';
+                added.innerHTML = 'Record <label class="switch"><input typ_e="checkbox"><span class="slider round"></span></label>';
                 added.id = 'selenium_button_menu'
                 place.appendChild(added);""")
 
@@ -851,15 +874,18 @@ class Listener(AbstractEventListener):
 if __name__ == "__main__":
     logging.basicConfig(format="%(asctime)s %(levelname)s | %(message)s", level=logging.INFO)
 
-    crawler1 = Crawler("c1", timeout_load=5, time_wait=1.5, info_as_node_xml=True, height_min=False, headless=True)#,
+    crawler1 = Crawler("c1", timeout_load=5, time_wait=1.5, info_as_node_xml=True, height_min=False, headless=False, timeout_seconds=20)#,
                         #,images_known=["test.jpg"])#
     crawler1.clear_log()
 
     #crawler1.get_website("https://www.skyscanner.net/transport/flights-from/vlc/1905212/190219/?adults=1&children=0&adultsv2=1&childrenv2=&infants=0&cabinclass=economy&rtn=1&preferdirects=false&outboundaltsenabled=false&inboundaltsenabled=false&ref=home",)
     #crawler1.classify_buttons()
-    crawler1.crawl(max_depth=2, load_amount=1, max_tabs=25, autosave=True, forbidden_domains=["duckduckgo.com","twitter.com","accounts.google.com", "spreadprivacy.com", "donttrack.us", "www.reddit.com", "reddit.com", "disqus.com"],
+    crawler1.crawl(max_depth=2, load_amount=0, max_tabs=5, autosave=True, 
+                forbidden_domains=["duckduckgo.com","twitter.com","accounts.google.com", "spreadprivacy.com",
+                                    "donttrack.us", "www.reddit.com", "reddit.com", "disqus.com", "facebook.com",
+                                    "google.com", "help.duckduckgo.com"],
                 record_text=False, record_img=False, record_source=False, record_iframes=True,
-                site="https://duckduckgo.com/ver%20barbie%20pelicula%20online?ia=web")#site="https://www.instagram.com/instagram")  
+                site="https://instagram.com")#site="https://www.instagram.com/instagram")  
 
     # ,condition="True",do_if_condition="""while(True): self.exec_js(\"\"\"document.querySelector("[class='browse-list-category']").click()\"\"\")""")
     # ,condition="'https://www.instagram.com/p/' in self.driver.current_url", do_if_condition="self.exec_js(\"\"\"document.querySelector(\"[class=\'dCJp8 afkep coreSpriteHeartOpen _0mzm-\']\").click();\"\"\")")
