@@ -25,6 +25,8 @@ from selenium import webdriver
 from collections import defaultdict
 from tldextract import extract
 from datetime import datetime
+from json import dumps
+from pycountry import languages
 
 from image_manager import Image_manager,img_compare_encode,img_face_encode,img_face_load
 #import _thread
@@ -46,8 +48,9 @@ class Crawler(object):
 
         try:
             firefox_capabilities = DesiredCapabilities.FIREFOX
-            firefox_capabilities['marionette'] = True
-            firefox_capabilities["dom.popup_maximum"] = tabs_per_window
+            firefox_capabilities.setdefault('marionette', True)
+            firefox_capabilities.setdefault("dom.popup_maximum", tabs_per_window)
+            firefox_capabilities.setdefault("browserName", "")
 
             options = webdriver.firefox.options.Options()
             options.set_preference("browser.popups.showPopupBlocker",False)
@@ -59,7 +62,8 @@ class Crawler(object):
             profile = webdriver.FirefoxProfile()
             del profile.DEFAULT_PREFERENCES['frozen']["browser.link.open_newwindow"]
             del profile.DEFAULT_PREFERENCES['frozen']["security.fileuri.origin_policy"]
-            #http://kb.mozillazine.org/About:config_entries  #profile
+            del profile.DEFAULT_PREFERENCES['frozen']["browser.offline"]
+            #http://kb.mozillazine.org/About:config_entries
             #http://kb.mozillazine.org/Category:Preferences
             profile.set_preference("browser.link.open_newwindow", 3)
             profile.set_preference("dom.popup_maximum", tabs_per_window)
@@ -98,16 +102,28 @@ class Crawler(object):
             profile.set_preference("general.startup.browser", False)
             profile.set_preference("plugin.default_plugin_disabled", False)
             profile.set_preference("browser.privatebrowsing.autostart", True)
+            profile.set_preference("general.useragent.security", 'N')
+            while(not languages._is_loaded): languages._load()
+            profile.set_preference("general.useragent.locale", choice(
+                        list(languages.indices["alpha_3"].keys())))
+            # Not working even tho i think it did
             profile.set_preference("navigator.doNotTrack", 1)
+            profile.set_preference("navigator.appCodeName",'')
+            profile.set_preference("navigator.appName",'')
+            profile.set_preference("navigator.appVersion",'')
+            profile.set_preference("navigator.buildID",'')
+            profile.set_preference("navigator.oscpu",'')
+            profile.set_preference("navigator.platform",'')
+            profile.set_preference("navigator.product",'')
+            profile.set_preference("navigator.productSub",'')
+            profile.set_preference("navigator.userAgent",'')
             profile.set_preference("general.useragent.override", '')
+            profile.set_preference("general.useragent.site_specific_overrides", False)
             profile.set_preference('general.platform.override','')
             profile.set_preference('general.appname.override','')
             profile.set_preference('general.appversion.override','')
             profile.set_preference("general.buildID.override", '')
             profile.set_preference("general.oscpu.override", '')
-            # Not working. I think it's not possible either
-            # It depends in wether useragent was modified or not
-            profile.set_preference('general.webdriver.override',False)
             profile.set_preference('general.useragent.vendor', '')
             profile.set_preference("browser.search.region",choice([
                         "AF","AL","DZ","AS","AD","AO","AQ","AG","AR","AM",
@@ -185,16 +201,13 @@ class Crawler(object):
             profile.set_preference("browser.newtabpage.activity-stream.asrouter.userprefs.cfr.features", False)
             profile.set_preference("browser.search.suggest.enabled", False)
             profile.set_preference("xpinstall.whitelist.required", True)
-            
-
-
-
 
             #Test
             profile.set_preference("network.manage-offline-status", True)
             profile.set_preference("browser.offline", True)
 
             options.add_argument("--lang=en")
+            options.add_argument("--user-agent=''")
 
             # Not tested
             if(max_cache_RAM_KB): profile.set_preference("browser.cache.memory.capacity",max_cache_RAM_KB)
@@ -216,7 +229,7 @@ class Crawler(object):
             logging.info("Configuration complete. Trying to run the drivers. This could take some time...")
             self.driver = webdriver.Firefox(executable_path=(
                     __file__).replace("crawler2.py", "geckodriver"),
-                    options=options, firefox_profile=profile) #firefox_binary=binary,
+                    options=options, firefox_profile=profile, capabilities=firefox_capabilities) #firefox_binary=binary,
             logging.info("Drivers ran succesfully!")
 
             # Useless
@@ -234,7 +247,7 @@ class Crawler(object):
 
             self.driver = webdriver.Firefox()
 
-        self.directory = (__file__)[:-len("crawler2.py")]
+        self.directory = (__file__)[:-len("crawler2.py")].replace(f'\\','/')
         os.chdir(self.directory)
 
         self.name = str(crawler_name)
@@ -298,15 +311,14 @@ class Crawler(object):
                 except Exception as e:
                     if(e.msg == "Cyclic object value"): break
                     # Code from https://stackoverflow.com/questions/7474354/include-jquery-in-the-javascript-console
-                    self.exec_js("""javascript: (function(e, source) {
+                    print(self.exec_js("""javascript: (function(e, source) {
                                     e.src = source;
                                     e.onload = function() {
                                         jQuery.noConflict();
                                         console.log('jQuery loaded');
                                     };
-                                    document.head.appendChild(e);
-                                    //document.domain = "https://code.jquery.com";
-                                })(document.createElement('script'), '//code.jquery.com/jquery-latest.min.js');""")
+                                    document.head.appendChild(e);}"""
+                                f")(document.createElement('script'), {dumps(open('jQuery.js','r').read())});"))
                     time.sleep(.5) 
                     logging.warning(f"jQuery failed with message: {e}")    
             else: logging.warning("jQuery not loaded")                    
@@ -324,7 +336,7 @@ class Crawler(object):
             record_text:bool=False, record_img:bool=False, record_source:bool=False,
             record_iframes:bool=False, forbidden_domains:list=[], allowed_domains:list=['*'],
             condition:str=None, do_if_condition:str=None, recrawl:bool=False, 
-            autosave:bool=False, record_depth:bool=True) -> None:
+            autosave:bool=False, record_meta:bool=True, load_after:dict=[]) -> None:
 
         if(site):
             self.get_website(site, forbidden_domains=forbidden_domains, allowed_domains=allowed_domains)
@@ -332,25 +344,34 @@ class Crawler(object):
         if(max_tabs > max_depth):
             #num tabs must be at least equal to max depth being opened
             #but max_depth starts at 0.
-            #try:
-            while(len(self.processing_tabs)):
-                # Open needed tabs
-                self.crawl_new_tab(max_depth, max_tabs, forbidden_domains=forbidden_domains, allowed_domains=allowed_domains)
+            try:
+                while(len(self.processing_tabs)):
+                    # Open needed tabs
+                    self.crawl_new_tab(max_depth, max_tabs, forbidden_domains=forbidden_domains, allowed_domains=allowed_domains)
 
-                # Load all tabs
-                if(load_amount >= 0):
-                    self.crawl_load_remove_tabs(load_amount, max_depth, max_tabs, record_text, record_img,
-                                                    record_source, record_depth, record_iframes, condition, 
-                                                    do_if_condition)
-                    # Treat buttons
-                    #logging.info(self.classify_buttons())
-                    
-                if(autosave): self.data_to_xml(self.data_root)
+                    # Load all tabs
+                    if(load_amount >= 0):
+                        self.crawl_load_remove_tabs(load_amount, max_depth, max_tabs, record_text, record_img,
+                                                        record_source, record_meta, record_iframes, condition, 
+                                                        do_if_condition)
+                        # Treat buttons
+                        #logging.info(self.classify_buttons())
+                        
+                    if(autosave): self.data_to_xml(self.data_root)
 
-            
-            #except Exception as err:
+                    # This 3 lines may be confusing: Here the crawler will load the sites
+                    # given in the attr load_after. This attribute was necessary to continue
+                    # a crawling that was stopped early, but I think it can also be useful when
+                    # you want to load specific sites along the crawling 
+                    # Also this lines are wrong, they should be into crawl_new_tab '-.-
+                    while(len(load_after) and len(self.processing_tabs) and len(self.driver.window_handles) < max_tabs):
+                        node, depth = list(load_after.items())[0]
+                        self.goto_new_site(node.get("link"), depth, node) #Depth will be wrong, but ill filx it later
+                        del load_after[node]
+
+            except Exception as err:
                 #raise err
-                #logging.error(err)
+                logging.error(err)
             
             self.data_to_xml(self.data_root)
 
@@ -400,7 +421,8 @@ class Crawler(object):
                         site.set_timeout(0)
                     
                     site.set_removed_scroll(loaded[:])
-                elif(not len(site.get_hrefs()) or (site.get_depth() == max_depth and site.get_timeout() > 0)):
+                elif(not len(site.get_hrefs()) or (site.get_depth() == max_depth and site.get_timeout() > 0)
+                    and not site in self.to_remove):
                     # Has the site loaded entirely? If the site depth is max_depth
                     # the amount of href will never go down
                     self.to_remove.append(site)
@@ -432,7 +454,7 @@ class Crawler(object):
                         if(eval(condition)):
                             logging.info("Do_if_condition: ", end="")
                             logging.info(eval(do_if_condition))
-                    
+
                     self.processing_tabs.remove(site)
 
                     self.driver.switch_to.window(site.get_tab())
@@ -444,60 +466,132 @@ class Crawler(object):
                     
                     if(site in self.to_remove):
                         self.to_remove.remove(site)
-                    del self.sites[site]
+                    #del self.sites[site]
             
         time.sleep(self.time_wait_load)
 
         return self.to_remove
 
     def crawl_remove_tabs(self, max_depth:int=1, record_text:bool=False, record_img:bool=False,
-                            record_source:bool=False, record_depth:bool=True, record_iframes:bool=False) -> None:
-
-        # iframes are not being recorded
+                            record_source:bool=False, record_meta:bool=True, record_iframes:bool=False) -> None:
         self.to_remove = [valid for valid in self.to_remove if valid.get_tab() in self.driver.window_handles]
         
-        if(len(self.to_remove) > 0):
-            for removing in self.to_remove:
-                try:  # Sometimes tab is closed but not removed form list
-                    self.driver.switch_to.window(removing.get_tab())
-                    
-                    if(record_text):
-                        self.get_text(parent=removing.get_parent(), keep_dom_nodes=False)
-                    if(record_img):
-                        self.get_images(parent=removing.get_parent())
-                    if(record_source):
-                        self.get_source(parent=removing.get_parent())
-                    if(record_depth):
-                        if(self.info_as_node):
-                            typ_e = "depth"
-                        else: typ_e = None
-                        self.store(typ_e=typ_e, data=removing.get_depth(), dataname="depth", root=False, parent=removing.get_parent())
-                        del typ_e
-                    if(record_iframes):
-                        self.get_iframes(parent=removing.get_parent())
-
-                    if(removing.get_depth()==max_depth):
-                        for link in removing.get_hrefs():
-                            try:
-                                self.store(typ_e="site", data=link.get_attribute("href"), dataname="link", root=False, parent=removing.get_parent())
-                            except: continue
-
-                    self.loaded_sites.append(removing)
+        for removing in self.to_remove:
+            try:  # Sometimes tab is closed but not removed form list
+                self.driver.switch_to.window(removing.get_tab())
                 
-                except Exception as err:
+                if(record_text):
+                    self.get_text(parent=removing.get_parent(), keep_dom_nodes=False)
+                if(record_img):
+                    self.get_images(parent=removing.get_parent())
+                if(record_source):
+                    self.get_source(parent=removing.get_parent())
+                if(record_meta):
+                    parent = self.store(typ_e=("meta" if self.info_as_node else None), data=True, dataname="loaded", 
+                                parent=removing.get_parent())
+                    self.store(data=removing.get_depth(), dataname="depth", parent=parent)
+                    del parent
+                if(record_iframes):
+                    self.get_iframes(parent=removing.get_parent())
+
+                if(removing.get_depth()==max_depth):
+                    for link in removing.get_hrefs():
+                        try:
+                            self.store(typ_e="site", data=link.get_attribute("href"), dataname="link", root=False, parent=removing.get_parent())
+                        except: continue
+
+                self.loaded_sites.append(removing)
+            
+            except Exception as err:
                     logging.error(err)
 
     def crawl_load_remove_tabs(self, load_amount:int=-1, max_depth:int=1, max_tabs:int=5, record_text:bool=False,
-                                record_img:bool=False, record_source:bool=False, record_depth:bool=True, record_iframes:bool=False,
+                                record_img:bool=False, record_source:bool=False, record_meta:bool=True, record_iframes:bool=False,
                                 condition:str=False, do_if_condition:str=False) -> None:
-        self.crawl_load_tabs(load_amount, max_depth, max_tabs, condition, do_if_condition)
-        self.crawl_remove_tabs(max_depth, record_text, record_img, record_source, record_depth, record_iframes)
+        if(len(self.crawl_load_tabs(load_amount, max_depth, max_tabs, condition, do_if_condition))):
+            self.crawl_remove_tabs(max_depth, record_text, record_img, record_source, record_meta, record_iframes)
+
+    def crawl_continue(self, xml_file:'file'=None, max_depth:int=1, load_amount:int=-1, max_tabs:int=5,
+                            record_text:bool=False, record_img:bool=False, record_source:bool=False,
+                            record_iframes:bool=False, forbidden_domains:list=[], allowed_domains:list=['*'],
+                            condition:str=None, do_if_condition:str=None, recrawl:bool=False, 
+                            autosave:bool=False, record_meta:bool=True):
+        if(xml_file is None and os.path.isfile(f"{self.output}.XML")):
+            xml_file = ET.parse(f"{self.output}.XML")
+        elif(type(xml_file) is str and os.path.isfile(xml_file)):
+            xml_file = ET.parse(xml_file)
+        
+        if(type(xml_file) is ET.ElementTree):
+            self.data_root = xml_file.getroot()
+
+            check = lambda site: not site.get("loaded") is None or (not site.find("./meta") is None and not site.find("./meta").get("loaded") is None)
+            
+            node_history = [self.data_root]
+            tabs = {}
+            nodes = {self.data_root:0}
+            load_after = {}
+            loaded_seen = [self.data_root]
+
+            domain = extract(node_history[-1].get("link"))
+            self.visited_domain['.'.join(domain[1 if domain[0]=='' else 0:])] += 1
+            del domain
+            self.visited_sites[node_history[-1].get("link")] += 1
+                                                      
+            while(len(nodes)): # I won't stop once tabs is complete so that i can register all sites
+                # I will make use of the fact that dicts are now ordered
+                already_seen = [0,0]
+
+                for node in node_history[-1].findall("./site"):
+                    if(check(node) or not len(node.findall("./*"))):
+                        if(len(tabs) < max_tabs): 
+                            if(not node in tabs.keys()): 
+                                tabs[node] = len(node_history)
+                            else: already_seen[0] += 1
+                        elif(not node in list(load_after.keys()) + list(tabs.keys())): 
+                            load_after[node] = len(node_history)
+                        else: already_seen[0] += 1
+                    elif(not node in loaded_seen):
+                        loaded_seen.append(node)
+                        domain = extract(node.get("link"))
+                        self.visited_domain['.'.join(domain[1 if domain[0]=='' else 0:])] += 1
+                        del domain
+                        self.visited_sites[node.get("link")] += 1
+                    else: already_seen[0] += 1
+
+                    if(already_seen[1] == already_seen[0]):
+                        nodes[node] = len(node_history)
+                    else: already_seen[1] = already_seen[0]
+                
+                if(len(node_history) >= max_depth): node_history = node_history[:-1]
+                else: 
+                    for node, depth in list(nodes.items())[::-1]:
+                        if(depth < max_depth):
+                            node_history.append(node)
+                            del nodes[node]
+                            break
+                        else:
+                            del nodes[node]
+
+            del node_history, loaded_seen, nodes, check, xml_file, already_seen
+            
+            node, depth = list(tabs.items())[0]
+            self.get_website(node.get("link"), node, depth)
+            del tabs[node]
+            for node, depth in tabs.items(): self.goto_new_site(node.get("link"), depth, node)
+            
+            del tabs
+
+            self.crawl(None, max_depth, load_amount, max_tabs, record_text, record_img, record_source, record_iframes,
+                        forbidden_domains, allowed_domains, condition, do_if_condition, recrawl, autosave, record_meta,
+                        load_after)
+        else: raise ValueError("No xml file was given. The crawling process can not start without a starting"
+                                "point.")
 
     # Runs loads a new site and returns its hrefs
-    def get_new_sites(self, site:str=None, forbidden_domains:list=[], allowed_domains:list=['*']) -> list:
+    def get_new_sites(self, site:str=None, parent=None, forbidden_domains:list=[], allowed_domains:list=['*']) -> list:
         # Later it will not only get hrefs
         if(site):
-            self.get_website(site)
+            self.get_website(site, parent)
 
         final = []
         tab = self.driver.current_window_handle
@@ -610,10 +704,10 @@ class Crawler(object):
             else:
                 parent = ET.SubElement(parent, str(typ_e))
             
-            if(data and dataname):
+            if(not (data is None or dataname is None)):
                 parent.set(str(dataname), str(data))
         else:
-            if(data and dataname):
+            if(not (data is None or dataname is None)):
                 parent.set(str(dataname), str(data))
         
         if(root):
@@ -628,6 +722,7 @@ class Crawler(object):
     def data_to_xml(self, data_root:object) -> None:
         os.chdir(self.directory)
         
+        # Root site_value is wrong
         for site_key, site_value in self.sites.items():
             self.store(data=site_value, dataname="times_visited", parent=site_key.get_parent())
         
@@ -874,18 +969,18 @@ class Listener(AbstractEventListener):
 if __name__ == "__main__":
     logging.basicConfig(format="%(asctime)s %(levelname)s | %(message)s", level=logging.INFO)
 
-    crawler1 = Crawler("c1", timeout_load=5, time_wait=1.5, info_as_node_xml=True, height_min=False, headless=False, timeout_seconds=20)#,
+    crawler1 = Crawler("C1", timeout_load=5, time_wait=1.5, info_as_node_xml=True, height_min=False, headless=False, timeout_seconds=20)#,
                         #,images_known=["test.jpg"])#
-    crawler1.clear_log()
+    #crawler1.clear_log()
 
     #crawler1.get_website("https://www.skyscanner.net/transport/flights-from/vlc/1905212/190219/?adults=1&children=0&adultsv2=1&childrenv2=&infants=0&cabinclass=economy&rtn=1&preferdirects=false&outboundaltsenabled=false&inboundaltsenabled=false&ref=home",)
     #crawler1.classify_buttons()
-    crawler1.crawl(max_depth=2, load_amount=0, max_tabs=5, autosave=True, 
+    crawler1.crawl_continue(max_depth=2, load_amount=0, max_tabs=5, autosave=True, 
                 forbidden_domains=["duckduckgo.com","twitter.com","accounts.google.com", "spreadprivacy.com",
                                     "donttrack.us", "www.reddit.com", "reddit.com", "disqus.com", "facebook.com",
                                     "google.com", "help.duckduckgo.com"],
-                record_text=False, record_img=False, record_source=False, record_iframes=True,
-                site="https://instagram.com")#site="https://www.instagram.com/instagram")  
+                record_text=False, record_img=False, record_source=False, record_iframes=True
+                )#,site="https://www.princessmovies.org/list-all-barbie-movies-online/")#site="https://www.instagram.com/instagram")  
 
     # ,condition="True",do_if_condition="""while(True): self.exec_js(\"\"\"document.querySelector("[class='browse-list-category']").click()\"\"\")""")
     # ,condition="'https://www.instagram.com/p/' in self.driver.current_url", do_if_condition="self.exec_js(\"\"\"document.querySelector(\"[class=\'dCJp8 afkep coreSpriteHeartOpen _0mzm-\']\").click();\"\"\")")
