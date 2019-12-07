@@ -1,6 +1,8 @@
 # Scraper
 A python selenium bot for data gathering
 
+(Not only readme outdated, code needs refactoring)
+
 <a href="https://github.com/mozilla/geckodriver/releases">Geckodriver</a> as the firefox binaries
 
 Usage: python3 ./scraper.py
