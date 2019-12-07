@@ -17,7 +17,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
-from selenium.common.exceptions import TimeoutException, StaleElementReferenceException
+from selenium.common.exceptions import TimeoutException, StaleElementReferenceException, NoSuchWindowException
 from selenium.webdriver.firefox.firefox_binary import FirefoxBinary
 from selenium.webdriver.common.proxy import Proxy, ProxyType
 from selenium.webdriver.support.events import EventFiringWebDriver, AbstractEventListener
@@ -26,7 +26,10 @@ from collections import defaultdict
 from tldextract import extract
 from datetime import datetime
 
-from image_manager import Image_manager,img_compare_encode,img_face_encode,img_face_load
+try:
+    from image_manager import Image_manager,img_compare_encode,img_face_encode,img_face_load
+except ImportError:
+    Image_manager,img_compare_encode,img_face_encode,img_face_load = [lambda *_ : []]*4
 #import _thread
 
 
@@ -40,7 +43,7 @@ class Crawler(object):
                 images_known:list=[], find_known_img:bool=False, find_faces_known:bool=False,
                 http_proxy:str=None, ftp_proxy:str=None, ssl_proxy:str=None, socks_proxy:str=None,
                 load_images:bool=True, headless:bool=False, learning:bool=True, max_cache_RAM_KB:int=False,
-                width_min:int=420, width_max=1280, height_min:int=420, height_max:int=640):
+                width_min:int=None, width_max=None, height_min:int=None, height_max:int=None):
                 # 420,640 420,1280
         logging.info(f"Starting the creation of crawler {crawler_name}")
 
@@ -199,6 +202,11 @@ class Crawler(object):
             # Not tested
             if(max_cache_RAM_KB): profile.set_preference("browser.cache.memory.capacity",max_cache_RAM_KB)
 
+            self.max_cache_RAM_KB = max_cache_RAM_KB
+
+            self.headless = headless
+
+
             if(not load_images):
                 profile.set_preference("permissions.default.image", 2)
 
@@ -213,6 +221,11 @@ class Crawler(object):
                 profile.set_preference("network.proxy.socks", socks_proxy[:socks_proxy.find(":")])
                 profile.set_preference("network.proxy.socks_port", int(socks_proxy[socks_proxy.find(":")+1:]))
     
+            self.http_proxy = http_proxy
+            self.ftp_proxy = ftp_proxy
+            self.ssl_proxy = ssl_proxy
+            self.socks_proxy = socks_proxy
+
             logging.info("Configuration complete. Trying to run the drivers. This could take some time...")
             self.driver = webdriver.Firefox(executable_path=(
                     __file__).replace("crawler2.py", "geckodriver"),
@@ -235,7 +248,7 @@ class Crawler(object):
             self.driver = webdriver.Firefox()
 
         self.directory = (__file__)[:-len("crawler2.py")]
-        os.chdir(self.directory)
+        if(self.directory): os.chdir(self.directory)
 
         self.name = str(crawler_name)
 
@@ -251,6 +264,7 @@ class Crawler(object):
         self.timeout_load = timeout_load
         self.time_wait_load = time_wait
         self.driver.set_page_load_timeout(timeout_seconds)
+        self.timeout_seconds = timeout_seconds
 
         self.tabs_per_window = tabs_per_window
 
@@ -261,6 +275,7 @@ class Crawler(object):
 
         self.info_as_node = info_as_node_xml
 
+        self.load_images = load_images
         self.images_known = dict(zip(images_known,img_compare_encode(images_known)))
         self.find_known_img = find_known_img
         self.find_faces_known = find_faces_known
@@ -275,6 +290,12 @@ class Crawler(object):
     # Loads a new site in the current tab
     def get_website(self, site=None, parent=None, depth:int=0, forbidden_domains:list=[], allowed_domains:list=['*']) -> None:
         logging.debug(f"Trying to get site: {site}")
+        if(not len(self.driver.window_handles)): self.__init__(self.name, self.output, self.timeout_load,
+                                                        self.timeout_seconds, self.time_wait_load, self.info_as_node,
+                                                        self.tabs_per_window, self.images_known, self.find_known_img,
+                                                        self.find_faces_known, self.http_proxy, self.http_proxy,
+                                                        self.ssl_proxy, self.socks_proxy, self.load_images,
+                                                        self.headless, True, self.max_cache_RAM_KB)
         if(site):   
             try:
                 self.driver.get(site)
@@ -290,13 +311,13 @@ class Crawler(object):
                                             hrefs=self.get_new_sites(forbidden_domains=forbidden_domains, allowed_domains=allowed_domains), 
                                             depth=depth, parent=parent, timeout=-1))
             self.sites[self.processing_tabs[-1]] = depth
-            for _ in range(5):
+            for _ in range(0):
                 try: 
                     self.exec_js("return jQuery")
-                    logging.info("jQuery successfully loaded")
+                    logging.info("jQuery successfully loaded")  
                     break
                 except Exception as e:
-                    if(e.msg == "Cyclic object value"): break
+                    #if(e.msg == "Cyclic object value"): break
                     # Code from https://stackoverflow.com/questions/7474354/include-jquery-in-the-javascript-console
                     self.exec_js("""javascript: (function(e, source) {
                                     e.src = source;
@@ -309,7 +330,7 @@ class Crawler(object):
                                 })(document.createElement('script'), '//code.jquery.com/jquery-latest.min.js');""")
                     time.sleep(.5) 
                     logging.warning(f"jQuery failed with message: {e}")    
-            else: logging.warning("jQuery not loaded")                    
+            #else: logging.warning("jQuery not loaded")                    
         
         self.current_domain = self.exec_js("return document.domain")
 
@@ -324,7 +345,7 @@ class Crawler(object):
             record_text:bool=False, record_img:bool=False, record_source:bool=False,
             record_iframes:bool=False, forbidden_domains:list=[], allowed_domains:list=['*'],
             condition:str=None, do_if_condition:str=None, recrawl:bool=False, 
-            autosave:bool=False, record_depth:bool=True) -> None:
+            autosave:int=False, record_depth:bool=True) -> None:
 
         if(site):
             self.get_website(site, forbidden_domains=forbidden_domains, allowed_domains=allowed_domains)
@@ -333,6 +354,7 @@ class Crawler(object):
             #num tabs must be at least equal to max depth being opened
             #but max_depth starts at 0.
             #try:
+            counter = 0
             while(len(self.processing_tabs)):
                 # Open needed tabs
                 self.crawl_new_tab(max_depth, max_tabs, forbidden_domains=forbidden_domains, allowed_domains=allowed_domains)
@@ -345,8 +367,12 @@ class Crawler(object):
                     # Treat buttons
                     #logging.info(self.classify_buttons())
                     
-                if(autosave): self.data_to_xml(self.data_root)
-
+                if(autosave and not counter): 
+                    print("Storing data... ", end='')
+                    self.data_to_xml(self.data_root)
+                    
+                    print("Done")
+                counter = (counter+1)%autosave
             
             #except Exception as err:
                 #raise err
@@ -384,7 +410,8 @@ class Crawler(object):
         except: pass
 
     def crawl_load_tabs(self, load_amount:int=-1, max_depth:int=1, max_tabs:int=5, condition:str=False, 
-                        do_if_condition:str=False) -> list:
+                        do_if_condition:str=False, record_text:bool=False, record_img:bool=False,
+                            record_source:bool=False, record_depth:bool=True, record_iframes:bool=False) -> list:
         for site in self.processing_tabs:  # Last tab opened does not load
             if(site.get_timeout() < self.timeout_load):
                 
@@ -432,15 +459,48 @@ class Crawler(object):
                         if(eval(condition)):
                             logging.info("Do_if_condition: ", end="")
                             logging.info(eval(do_if_condition))
-                    
-                    self.processing_tabs.remove(site)
 
-                    self.driver.switch_to.window(site.get_tab())
+                    print("Gathering data... ",end='')
+
+                    if(record_text):
+                        print("text ",end='')
+                        self.get_text(parent=site.get_parent(), keep_dom_nodes=False, link=site.get_link())
+                    if(record_img):
+                        print("images ",end='')
+                        self.get_images(parent=site.get_parent(), link=site.get_link())
+                    if(record_source):
+                        print("source ",end='')
+                        self.get_source(parent=site.get_parent(), link=site.get_link())
+                    if(record_depth):
+                        if(self.info_as_node):
+                            typ_e = "depth"
+                        else: typ_e = None
+                        self.store(typ_e=typ_e, data=site.get_depth(), dataname="depth", root=False, parent=site.get_parent())
+                        del typ_e
+                    if(record_iframes):
+                        print("iframes ",end='')
+                        self.get_iframes(parent=site.get_parent(), link=site.get_link())
+
+                    if(site.get_depth()==max_depth):
+                        for link in site.get_hrefs():
+                            try:
+                                self.store(typ_e="site", data=link.get_attribute("href"), dataname="link", root=False, parent=site.get_parent())
+                            except: continue
+
+                    print("Done.")
                     
-                    self.exec_js("window.close();")
                     
                     logging.info(f"Closed depth {self.sites[site]} num {len(self.processing_tabs)} site \""
                     f"{site.get_link()}\" ({site.get_tab()}) with unopened {len(site.get_hrefs())} links")
+
+                    if(len(self.driver.window_handles) == 1): 
+                        self.driver.quit()
+                        self.processing_tabs.clear()
+                    else:
+                        self.driver.switch_to.window(site.get_tab())    
+                        self.exec_js("window.close();")
+                        
+                        self.processing_tabs.remove(site)
                     
                     if(site in self.to_remove):
                         self.to_remove.remove(site)
@@ -462,11 +522,11 @@ class Crawler(object):
                     self.driver.switch_to.window(removing.get_tab())
                     
                     if(record_text):
-                        self.get_text(parent=removing.get_parent(), keep_dom_nodes=False)
+                        self.get_text(parent=removing.get_parent(), keep_dom_nodes=False, link=removing.get_link())
                     if(record_img):
-                        self.get_images(parent=removing.get_parent())
+                        self.get_images(parent=removing.get_parent(), link=removing.get_link())
                     if(record_source):
-                        self.get_source(parent=removing.get_parent())
+                        self.get_source(parent=removing.get_parent(), link=removing.get_link())
                     if(record_depth):
                         if(self.info_as_node):
                             typ_e = "depth"
@@ -474,7 +534,7 @@ class Crawler(object):
                         self.store(typ_e=typ_e, data=removing.get_depth(), dataname="depth", root=False, parent=removing.get_parent())
                         del typ_e
                     if(record_iframes):
-                        self.get_iframes(parent=removing.get_parent())
+                        self.get_iframes(parent=removing.get_parent(), link=removing.get_link())
 
                     if(removing.get_depth()==max_depth):
                         for link in removing.get_hrefs():
@@ -490,8 +550,8 @@ class Crawler(object):
     def crawl_load_remove_tabs(self, load_amount:int=-1, max_depth:int=1, max_tabs:int=5, record_text:bool=False,
                                 record_img:bool=False, record_source:bool=False, record_depth:bool=True, record_iframes:bool=False,
                                 condition:str=False, do_if_condition:str=False) -> None:
-        self.crawl_load_tabs(load_amount, max_depth, max_tabs, condition, do_if_condition)
-        self.crawl_remove_tabs(max_depth, record_text, record_img, record_source, record_depth, record_iframes)
+        self.crawl_load_tabs(load_amount, max_depth, max_tabs, condition, do_if_condition, record_text, record_img, record_source, record_depth, record_iframes)
+        #self.crawl_remove_tabs(max_depth, record_text, record_img, record_source, record_depth, record_iframes)
 
     # Runs loads a new site and returns its hrefs
     def get_new_sites(self, site:str=None, forbidden_domains:list=[], allowed_domains:list=['*']) -> list:
@@ -504,7 +564,7 @@ class Crawler(object):
         for link in self.find_in_website(["//a[@href]"], By.XPATH):
             try: 
                 domain = extract(link.get_attribute('href'))
-                if(not '.'.join(domain[1 if domain[0]=='' else 0:]) in forbidden_domains): 
+                if(not '.'.join(domain[(1 if domain[0]=='' else 0):]) in forbidden_domains): 
                     final.append(link)
             except StaleElementReferenceException:
                 logging.error("Missing element. Checking for popups")
@@ -622,18 +682,18 @@ class Crawler(object):
         return parent
 
     def clear_log(self):
-        open(self.output+".xml", "w")
+        open(self.output+".xml", "w").close()
 
     # Stores data in self.name".xml"
     def data_to_xml(self, data_root:object) -> None:
-        os.chdir(self.directory)
+        if(self.directory): os.chdir(self.directory)
         
         for site_key, site_value in self.sites.items():
             self.store(data=site_value, dataname="times_visited", parent=site_key.get_parent())
         
         if(not data_root is None):
             self.data_tree._setroot(data_root)
-            self.data_tree.write(f"{self.name}.xml", short_empty_elements=False)
+            self.data_tree.write(f"{self.output}.xml", short_empty_elements=False)
 
     # Tries to interact with the tab to load dynamically-loaded data
     def load_site(self, removed_scroll:list=[], deep:int=0, first_scroll_steps:int=100) -> None:
@@ -684,31 +744,37 @@ class Crawler(object):
         return True
 
     # Runs script as a script in the current tab
-    def exec_js(self, script:str, args:list=None):
-        if(not type(args) == list or not type(args == tuple)): args = [args]
+    def exec_js(self, script:str, args:list=[None]):
+        if(not type(args) is list or not type(args) is tuple): args = [args]
 
         return self.driver.execute_script(script, *args)
 
     ### GET (from site)
 
     def get_text(self, parent, site:str=None, dataname:str="text", info_as_node:bool=False, 
-            keep_dom_nodes:bool=True) -> None:
+            keep_dom_nodes:bool=True, link:str=None) -> None:
         if(site):
             self.get_website(site)
 
         if(self.info_as_node or info_as_node): typ_e = dataname
         else: typ_e = None
         
+        #time.sleep(self.time_wait_load)
+
+        dom_nodes = self.exec_js("var el = document; var n, a=[],"
+                        "walk=document.createTreeWalker(el,NodeFilter.SHOW_TEXT,null,false);"
+                        "while(n=walk.nextNode()){n = n.data.trim();if(n != '' && !n.endsWith(';') && !n.endsWith('>') "
+                        "&& !n.endsWith('}')) a.push(n);} return a;")
         if(keep_dom_nodes):
             parent = self.store(typ_e=typ_e, data='', dataname=dataname, parent=parent)
-            for txt_node in self.exec_js(
-                    "return (jQuery('body, body *').contents().filter(function() {"
-                    "return this.nodetyp_e == Node.TEXT_NODE && this.textContent.trim() != '';})).toArray();"):                
-                self.store(typ_e=f"sub{typ_e}", data=txt_node["textContent"], dataname=dataname, parent=parent)
+            for txt_node in dom_nodes:                
+                text = self.store(typ_e=f"sub{typ_e}", data=txt_node, dataname=dataname, parent=parent)
+                if(link): self.store(data=link, dataname="link", parent=text)
         else:
-            self.store(typ_e=typ_e, data=self.exec_js("return jQuery('body').text();"), dataname=dataname, parent=parent)
+            text = self.store(typ_e=typ_e, data='\n'.join(dom_nodes), dataname=dataname, parent=parent)
+            if(link): self.store(data=link, dataname="link", parent=text)
 
-    def get_images(self, parent, site=None, dataname="img", info_as_node=False) -> None:
+    def get_images(self, parent, site=None, dataname="img", info_as_node=False, link:str=None) -> None:
         #I do write various functions so that people can run them in the do_if_condition
         if(site):
             self.get_website(site)
@@ -735,17 +801,19 @@ class Crawler(object):
             if(len(self.images_known)):
                 for file_name,comp in comparison.items():
                     image_parent = self.store(typ_e=datyp_e, dataname=f"{file_name}_ssim", data=comp[image_num][0], parent=image_parent)
-                    self.store(typ_e=None, dataname=f"{file_name}_mse", data=comp[image_num][1], parent=image_parent)
+                    img = self.store(typ_e=None, dataname=f"{file_name}_mse", data=comp[image_num][1], parent=image_parent)
+                    if(link): self.store(data=link, dataname="link", parent=img)
 
-    def get_source(self, parent:object, site=None, info_as_node:bool=False) -> None:
+    def get_source(self, parent:object, site=None, info_as_node:bool=False, link:str=None) -> None:
         if(site): self.get_website(site)
         
         if(self.info_as_node or info_as_node): typ_e = "Source"
         else: typ_e = None
 
-        self.store(typ_e=typ_e, data=self.driver.page_source, dataname="innerHTML", parent=parent)
+        source = self.store(typ_e=typ_e, data=self.driver.page_source, dataname="innerHTML", parent=parent)
+        if(link): self.store(data=link, dataname="link", parent=source)
 
-    def get_iframes(self, parent:object, site=None, dataname:str="iframe", info_as_node:bool=False) -> None:
+    def get_iframes(self, parent:object, site=None, dataname:str="iframe", info_as_node:bool=False, link:str=None) -> None:
         if(site):
             self.get_website(site)
 
@@ -753,7 +821,8 @@ class Crawler(object):
         else: typ_e = None
         
         for iframe in self.find_in_website(["iframe"], By.TAG_NAME, site):
-            self.store(typ_e=typ_e, data=iframe.get_attribute("src"), dataname=dataname, parent=parent)
+            ifr = self.store(typ_e=typ_e, data=iframe.get_attribute("src"), dataname=dataname, parent=parent)
+            if(link): self.store(data=link, dataname="link", parent=ifr)
 
     # Close the browser
     def close(self) -> None:
@@ -874,19 +943,28 @@ class Listener(AbstractEventListener):
 if __name__ == "__main__":
     logging.basicConfig(format="%(asctime)s %(levelname)s | %(message)s", level=logging.INFO)
 
-    crawler1 = Crawler("c1", timeout_load=5, time_wait=1.5, info_as_node_xml=True, height_min=False, headless=False, timeout_seconds=20)#,
                         #,images_known=["test.jpg"])#
-    crawler1.clear_log()
 
     #crawler1.get_website("https://www.skyscanner.net/transport/flights-from/vlc/1905212/190219/?adults=1&children=0&adultsv2=1&childrenv2=&infants=0&cabinclass=economy&rtn=1&preferdirects=false&outboundaltsenabled=false&inboundaltsenabled=false&ref=home",)
     #crawler1.classify_buttons()
-    crawler1.crawl(max_depth=2, load_amount=0, max_tabs=5, autosave=True, 
-                forbidden_domains=["duckduckgo.com","twitter.com","accounts.google.com", "spreadprivacy.com",
-                                    "donttrack.us", "www.reddit.com", "reddit.com", "disqus.com", "facebook.com",
-                                    "google.com"],
-                record_text=False, record_img=False, record_source=False, record_iframes=True,
-                site="https://duckduckgo.com/ver%20barbie%20pelicula%20online?ia=web")#site="https://www.instagram.com/instagram")  
+    for page in range(3):
+        crawler1 = Crawler("c2", timeout_load=5, time_wait=1.5, info_as_node_xml=True, timeout_seconds=20)#,
+
+        crawler1.output = f"c2_g{page}"
+        try:
+            crawler1.crawl(max_depth=1, load_amount=1, max_tabs=12, autosave=10, 
+                    forbidden_domains=["duckduckgo.com","twitter.com","accounts.google.com", "spreadprivacy.com",
+                                        "donttrack.us", "www.reddit.com", "reddit.com", "disqus.com", "facebook.com",
+                                        "google.com","help.duckduckgo.com","support.google.com","www.google.com",
+                                        "www.pinterest.es","www.pinterest.com","pinterest.es","pinterest.com",
+                                        "translate.google.com","webcache.googleusercontent.com","about.google"
+                                        "policies.google.com"],
+                    record_text=True, record_img=False, record_source=False, record_iframes=False,
+                    site=f"https://www.google.com/search?q=cork+material&client=firefox-b-d&ei=CczrXYqLHMOflwTUpaDIBA&start={page}0&sa=N&ved=2ahUKEwjKs-3Q86PmAhXDz4UKHdQSCEkQ8tMDegQIEBAw&biw=1366&bih=693")
+                    #site="https://www.instagram.com/instagram")
+        except NoSuchWindowException:    
+            crawler1.data_to_xml(crawler1.data_root)
 
     # ,condition="True",do_if_condition="""while(True): self.exec_js(\"\"\"document.querySelector("[class='browse-list-category']").click()\"\"\")""")
     # ,condition="'https://www.instagram.com/p/' in self.driver.current_url", do_if_condition="self.exec_js(\"\"\"document.querySelector(\"[class=\'dCJp8 afkep coreSpriteHeartOpen _0mzm-\']\").click();\"\"\")")
-    crawler1.close()
+        crawler1.close()
